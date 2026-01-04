@@ -1567,6 +1567,9 @@ const locale = {
 'community.message.operationSuccess': 'Thao tác thành công',
 
 'community.message.operationFailed': 'Thao tác thất bại thất bại',
+'community.banner.readOnly': 'Chỉ xem',
+'community.banner.loginHint': 'Để đăng nhập hoặc đăng ký, vui lòng nhấp vào nút để chuyển đến trang độc lập nhằm tránh các vấn đề CSRF',
+'community.banner.jumpButton': 'Đi đến Đăng nhập/Đăng ký',
 
 'dashboard.totalEquity': 'Tổng vốn chủ sở hữu',
 
