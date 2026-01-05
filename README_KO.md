@@ -82,13 +82,7 @@
 
 <div align="center">
   <a href="https://youtu.be/HPTVpqL7knM">
-    <img src="https://img.youtube.com/vi/HPTVpqL7knM/maxresdefault.jpg" alt="QuantDinger 프로젝트 소개 동영상" width="100%" style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 800px;">
-    <div style="position: relative; display: inline-block; margin-top: -100px;">
-      <svg width="100" height="100" viewBox="0 0 100 100" style="filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3));">
-        <circle cx="50" cy="50" r="45" fill="red" opacity="0.9"/>
-        <polygon points="40,30 40,70 70,50" fill="white"/>
-      </svg>
-    </div>
+    <img src="docs/screenshots/video_demo.png" alt="QuantDinger 프로젝트 소개 동영상" width="100%" style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 800px;">
   </a>
   <p><strong>위 동영상을 클릭하여 QuantDinger 프로젝트 소개를 시청하세요</strong></p>
 </div>
