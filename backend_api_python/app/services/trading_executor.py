@@ -964,6 +964,17 @@ class TradingExecutor:
                             )
                             if ok:
                                 logger.info(f"Strategy {strategy_id} signal executed: {signal_type} @ {execute_price}")
+                                # Notify portfolio positions linked to this symbol
+                                try:
+                                    from app.services.portfolio_monitor import notify_strategy_signal_for_positions
+                                    notify_strategy_signal_for_positions(
+                                        market=market_type or 'Crypto',
+                                        symbol=symbol,
+                                        signal_type=signal_type,
+                                        signal_detail=f"策略: {strategy_name}\n信号: {signal_type}\n价格: {execute_price:.4f}"
+                                    )
+                                except Exception as link_e:
+                                    logger.warning(f"Strategy signal linkage notification failed: {link_e}")
                             else:
                                 logger.warning(f"Strategy {strategy_id} signal rejected/failed: {signal_type}")
 

@@ -753,3 +753,59 @@ def get_strategy_notifications():
         logger.error(f"get_strategy_notifications failed: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({'code': 0, 'msg': str(e), 'data': {'items': []}}), 500
+
+
+@strategy_bp.route('/strategies/notifications/read', methods=['POST'])
+def mark_notification_read():
+    """Mark a single notification as read."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        notification_id = data.get('id')
+        if not notification_id:
+            return jsonify({'code': 0, 'msg': 'Missing id'}), 400
+
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "UPDATE qd_strategy_notifications SET is_read = 1 WHERE id = ?",
+                (int(notification_id),)
+            )
+            db.commit()
+            cur.close()
+
+        return jsonify({'code': 1, 'msg': 'success'})
+    except Exception as e:
+        logger.error(f"mark_notification_read failed: {str(e)}")
+        return jsonify({'code': 0, 'msg': str(e)}), 500
+
+
+@strategy_bp.route('/strategies/notifications/read-all', methods=['POST'])
+def mark_all_notifications_read():
+    """Mark all notifications as read."""
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute("UPDATE qd_strategy_notifications SET is_read = 1")
+            db.commit()
+            cur.close()
+
+        return jsonify({'code': 1, 'msg': 'success'})
+    except Exception as e:
+        logger.error(f"mark_all_notifications_read failed: {str(e)}")
+        return jsonify({'code': 0, 'msg': str(e)}), 500
+
+
+@strategy_bp.route('/strategies/notifications/clear', methods=['DELETE'])
+def clear_notifications():
+    """Clear all notifications (delete from database)."""
+    try:
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute("DELETE FROM qd_strategy_notifications")
+            db.commit()
+            cur.close()
+
+        return jsonify({'code': 1, 'msg': 'success'})
+    except Exception as e:
+        logger.error(f"clear_notifications failed: {str(e)}")
+        return jsonify({'code': 0, 'msg': str(e)}), 500

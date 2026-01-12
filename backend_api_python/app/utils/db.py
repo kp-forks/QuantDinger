@@ -242,6 +242,7 @@ def _init_db_schema(conn):
         "message": "TEXT DEFAULT ''",
         "payload_json": "TEXT DEFAULT ''",
         "created_at": "INTEGER",
+        "is_read": "INTEGER DEFAULT 0",
     })
 
     # 4. 指标代码表（参考 MySQL: qd_indicator_codes）
@@ -420,6 +421,119 @@ def _init_db_schema(conn):
         "exchange_id": "TEXT NOT NULL DEFAULT ''",
         "api_key_hint": "TEXT DEFAULT ''",
         "encrypted_config": "TEXT NOT NULL DEFAULT ''",
+        "created_at": "INTEGER",
+        "updated_at": "INTEGER"
+    })
+
+    # 11. Manual positions (user's existing holdings outside the system)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS qd_manual_positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1,
+        market TEXT NOT NULL,           -- Crypto/USStock/AShare/HShare/Forex/Futures
+        symbol TEXT NOT NULL,
+        name TEXT DEFAULT '',           -- Display name
+        side TEXT DEFAULT 'long',       -- long/short
+        quantity REAL NOT NULL DEFAULT 0,
+        entry_price REAL NOT NULL DEFAULT 0,
+        entry_time INTEGER,             -- Position open timestamp
+        notes TEXT DEFAULT '',          -- User notes
+        tags TEXT DEFAULT '',           -- JSON array of tags
+        group_name TEXT DEFAULT '',     -- Group name for categorization
+        created_at INTEGER,
+        updated_at INTEGER,
+        UNIQUE(user_id, market, symbol, side)
+    )
+    """)
+
+    ensure_columns("qd_manual_positions", {
+        "user_id": "INTEGER NOT NULL DEFAULT 1",
+        "market": "TEXT NOT NULL DEFAULT ''",
+        "symbol": "TEXT NOT NULL DEFAULT ''",
+        "name": "TEXT DEFAULT ''",
+        "side": "TEXT DEFAULT 'long'",
+        "quantity": "REAL NOT NULL DEFAULT 0",
+        "entry_price": "REAL NOT NULL DEFAULT 0",
+        "entry_time": "INTEGER",
+        "notes": "TEXT DEFAULT ''",
+        "tags": "TEXT DEFAULT ''",
+        "group_name": "TEXT DEFAULT ''",
+        "created_at": "INTEGER",
+        "updated_at": "INTEGER"
+    })
+    
+    # 11.1 Position alerts (price alerts and PnL alerts for manual positions)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS qd_position_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1,
+        position_id INTEGER,            -- FK to qd_manual_positions (NULL = symbol-level alert)
+        market TEXT DEFAULT '',
+        symbol TEXT DEFAULT '',
+        alert_type TEXT NOT NULL,       -- price_above / price_below / pnl_above / pnl_below
+        threshold REAL NOT NULL DEFAULT 0,
+        notification_config TEXT DEFAULT '',  -- JSON: channels, targets
+        is_active INTEGER DEFAULT 1,
+        is_triggered INTEGER DEFAULT 0,
+        last_triggered_at INTEGER,
+        trigger_count INTEGER DEFAULT 0,
+        repeat_interval INTEGER DEFAULT 0,    -- 0=once, >0=repeat every N seconds
+        notes TEXT DEFAULT '',
+        created_at INTEGER,
+        updated_at INTEGER
+    )
+    """)
+    
+    ensure_columns("qd_position_alerts", {
+        "user_id": "INTEGER NOT NULL DEFAULT 1",
+        "position_id": "INTEGER",
+        "market": "TEXT DEFAULT ''",
+        "symbol": "TEXT DEFAULT ''",
+        "alert_type": "TEXT NOT NULL DEFAULT 'price_above'",
+        "threshold": "REAL NOT NULL DEFAULT 0",
+        "notification_config": "TEXT DEFAULT ''",
+        "is_active": "INTEGER DEFAULT 1",
+        "is_triggered": "INTEGER DEFAULT 0",
+        "last_triggered_at": "INTEGER",
+        "trigger_count": "INTEGER DEFAULT 0",
+        "repeat_interval": "INTEGER DEFAULT 0",
+        "notes": "TEXT DEFAULT ''",
+        "created_at": "INTEGER",
+        "updated_at": "INTEGER"
+    })
+
+    # 12. Position monitors (AI analysis tasks for manual positions)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS qd_position_monitors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 1,
+        name TEXT DEFAULT '',                   -- Monitor name
+        position_ids TEXT DEFAULT '',           -- JSON array of position IDs (empty = all positions)
+        monitor_type TEXT DEFAULT 'ai',         -- ai / price_alert / pnl_alert
+        config TEXT DEFAULT '',                 -- JSON config (interval_minutes, prompt, thresholds, etc.)
+        notification_config TEXT DEFAULT '',    -- JSON notification config (channels, targets)
+        is_active INTEGER DEFAULT 1,
+        last_run_at INTEGER,
+        next_run_at INTEGER,
+        last_result TEXT DEFAULT '',            -- Last analysis result (JSON)
+        run_count INTEGER DEFAULT 0,
+        created_at INTEGER,
+        updated_at INTEGER
+    )
+    """)
+
+    ensure_columns("qd_position_monitors", {
+        "user_id": "INTEGER NOT NULL DEFAULT 1",
+        "name": "TEXT DEFAULT ''",
+        "position_ids": "TEXT DEFAULT ''",
+        "monitor_type": "TEXT DEFAULT 'ai'",
+        "config": "TEXT DEFAULT ''",
+        "notification_config": "TEXT DEFAULT ''",
+        "is_active": "INTEGER DEFAULT 1",
+        "last_run_at": "INTEGER",
+        "next_run_at": "INTEGER",
+        "last_result": "TEXT DEFAULT ''",
+        "run_count": "INTEGER DEFAULT 0",
         "created_at": "INTEGER",
         "updated_at": "INTEGER"
     })

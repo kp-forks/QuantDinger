@@ -1,6 +1,7 @@
 <template>
   <div :class="wrpCls">
     <!-- User avatar/name removed for local OSS build -->
+    <notice-icon :class="prefixCls" />
     <select-lang :class="prefixCls" />
     <a-tooltip :title="$t('app.setting.tooltip')">
       <span :class="prefixCls" @click="handleSettingClick">
@@ -12,11 +13,13 @@
 
 <script>
 import SelectLang from '@/components/SelectLang'
+import NoticeIcon from '@/components/NoticeIcon'
 
 export default {
   name: 'RightContent',
   components: {
-    SelectLang
+    SelectLang,
+    NoticeIcon
   },
   props: {
     prefixCls: {

@@ -37,7 +37,7 @@ class LLMService:
         config = load_addon_config()
         openrouter_config = config.get('openrouter', {})
         
-        default_model = openrouter_config.get('model', 'google/gemini-3-pro-preview')
+        default_model = openrouter_config.get('model', 'openai/gpt-4o')
         
         if model is None:
             model = default_model

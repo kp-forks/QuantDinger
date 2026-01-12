@@ -43,6 +43,30 @@ def get_reflection_worker():
     return _reflection_worker
 
 
+def start_portfolio_monitor():
+    """Start the portfolio monitor service if enabled.
+    
+    To enable it, set ENABLE_PORTFOLIO_MONITOR=true.
+    """
+    import os
+    enabled = os.getenv("ENABLE_PORTFOLIO_MONITOR", "true").lower() == "true"
+    if not enabled:
+        logger.info("Portfolio monitor is disabled. Set ENABLE_PORTFOLIO_MONITOR=true to enable.")
+        return
+    
+    # Avoid running twice with Flask reloader
+    debug = os.getenv("PYTHON_API_DEBUG", "false").lower() == "true"
+    if debug:
+        if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+            return
+    
+    try:
+        from app.services.portfolio_monitor import start_monitor_service
+        start_monitor_service()
+    except Exception as e:
+        logger.error(f"Failed to start portfolio monitor: {e}")
+
+
 def start_reflection_worker():
     """
     Start the reflection worker if enabled.
@@ -163,6 +187,7 @@ def create_app(config_name='default'):
     with app.app_context():
         start_pending_order_worker()
         start_reflection_worker()
+        start_portfolio_monitor()
         restore_running_strategies()
     
     return app

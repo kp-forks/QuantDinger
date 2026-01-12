@@ -37,6 +37,13 @@ export const asyncRouterMap = [
         component: () => import('@/views/trading-assistant'),
         meta: { title: 'menu.dashboard.tradingAssistant', keepAlive: true, icon: 'robot', permission: ['dashboard'] }
       },
+      // 资产监测
+      {
+        path: '/portfolio',
+        name: 'Portfolio',
+        component: () => import('@/views/portfolio'),
+        meta: { title: 'menu.dashboard.portfolio', keepAlive: true, icon: 'fund', permission: ['dashboard'] }
+      },
       // 指标社区（keepAlive disabled intentionally for iframe page)
       {
         path: '/indicator-community',

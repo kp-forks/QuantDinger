@@ -48,6 +48,7 @@ import {
   Space,
   Empty,
   Rate,
+  AutoComplete,
   message,
   notification
 } from 'ant-design-vue'
@@ -107,6 +108,7 @@ Vue.use(Descriptions)
 Vue.use(Space)
 Vue.use(Empty)
 Vue.use(Rate)
+Vue.use(AutoComplete)
 // Textarea 是 Input 组件的一部分，通过 Vue.use(Input) 已自动注册
 
 Vue.prototype.$confirm = Modal.confirm
