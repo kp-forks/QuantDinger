@@ -431,6 +431,24 @@ class OAuthService:
                 
                 db.commit()
                 cur.close()
+
+                # Grant registration bonus credits for OAuth-created users
+                # Keep consistent with email/password registration flows (auth.py).
+                try:
+                    register_bonus = int(os.getenv('CREDITS_REGISTER_BONUS', '0'))
+                except (ValueError, TypeError):
+                    register_bonus = 0
+                if register_bonus > 0:
+                    try:
+                        from app.services.billing_service import get_billing_service
+                        get_billing_service().add_credits(
+                            user_id=user_id,
+                            amount=register_bonus,
+                            action='register_bonus',
+                            remark=f'Registration bonus (OAuth:{provider})'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to grant OAuth registration bonus: {e}")
                 
                 return True, {
                     'id': user_id,

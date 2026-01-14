@@ -794,7 +794,9 @@ export default {
 
       if (oauthToken) {
         this.oauthProcessing = true
-        storage.set(ACCESS_TOKEN, oauthToken, 7 * 24 * 60 * 60 * 1000)
+        // NOTE: storage expire plugin expects an absolute timestamp (ms since epoch),
+        // not a duration. Use "now + 7 days" to avoid immediate expiration.
+        storage.set(ACCESS_TOKEN, oauthToken, new Date().getTime() + 7 * 24 * 60 * 60 * 1000)
         window.history.replaceState({}, document.title, window.location.pathname + window.location.hash.split('?')[0])
         this.$store.dispatch('GetInfo').then(() => {
           this.$router.push({ path: '/' })

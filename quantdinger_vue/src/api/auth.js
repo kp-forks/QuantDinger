@@ -1,5 +1,18 @@
 import request from '@/utils/request'
 
+function joinApiBase (path) {
+  const base = (process.env.VUE_APP_API_BASE_URL || '').trim()
+  const p = path.startsWith('/') ? path : `/${path}`
+  if (!base) return p
+
+  const b = base.replace(/\/+$/, '')
+  // Avoid duplicate "/api/api/*" when base is "/api" or ends with "/api"
+  if (b.endsWith('/api') && p.startsWith('/api/')) {
+    return b + p.slice('/api'.length)
+  }
+  return b + p
+}
+
 /**
  * Get security configuration (Turnstile, OAuth settings)
  */
@@ -107,12 +120,12 @@ export function changePassword (data) {
  * Get Google OAuth URL
  */
 export function getGoogleOAuthUrl () {
-  return `${process.env.VUE_APP_API_BASE_URL || ''}/api/auth/oauth/google`
+  return joinApiBase('/api/auth/oauth/google')
 }
 
 /**
  * Get GitHub OAuth URL
  */
 export function getGitHubOAuthUrl () {
-  return `${process.env.VUE_APP_API_BASE_URL || ''}/api/auth/oauth/github`
+  return joinApiBase('/api/auth/oauth/github')
 }

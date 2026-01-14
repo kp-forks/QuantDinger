@@ -6,6 +6,7 @@ Supports both multi-user (database) and single-user (legacy) modes.
 """
 import os
 from flask import Blueprint, request, jsonify, g, redirect
+from urllib.parse import urlencode
 from app.config.settings import Config
 from app.utils.auth import generate_token, login_required, authenticate_legacy
 from app.utils.logger import get_logger
@@ -13,6 +14,28 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
+
+def _build_frontend_login_redirect(frontend_url: str, **params) -> str:
+    """
+    Build a redirect URL to frontend login page for OAuth flows.
+
+    Frontend uses Vue Router hash mode (`/#/user/login`), so redirecting to `/user/login`
+    will 404 on static hosting. Always normalize to `{origin}/#/user/login`.
+    """
+    base = (frontend_url or '').strip().rstrip('/')
+    if not base:
+        base = 'http://localhost:8080'
+
+    if '/#/' in base:
+        origin = base.split('/#/', 1)[0].rstrip('/')
+    elif '#' in base:
+        origin = base.split('#', 1)[0].rstrip('/')
+    else:
+        origin = base
+
+    login_url = f"{origin}/#/user/login"
+    qs = urlencode({k: v for k, v in params.items() if v is not None and v != ''})
+    return f"{login_url}?{qs}" if qs else login_url
 
 
 def _is_single_user_mode() -> bool:
@@ -813,22 +836,22 @@ def oauth_google_callback():
         frontend_url = oauth.frontend_url
         
         if error:
-            return redirect(f"{frontend_url}/user/login?oauth_error={error}")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error=error))
         
         if not code or not state:
-            return redirect(f"{frontend_url}/user/login?oauth_error=missing_params")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error='missing_params'))
         
         # Handle callback
         success, result = oauth.handle_google_callback(code, state)
         if not success:
             error_msg = result.get('error', 'unknown_error')
-            return redirect(f"{frontend_url}/user/login?oauth_error={error_msg}")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error=error_msg))
         
         # Get or create user
         user_success, user_result = oauth.get_or_create_user_from_oauth(result)
         if not user_success:
             error_msg = user_result.get('error', 'user_creation_failed')
-            return redirect(f"{frontend_url}/user/login?oauth_error={error_msg}")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error=error_msg))
         
         # Generate token
         token = generate_token(
@@ -842,13 +865,13 @@ def oauth_google_callback():
                                    {'provider': 'google'})
         
         # Redirect to frontend with token
-        return redirect(f"{frontend_url}/user/login?oauth_token={token}")
+        return redirect(_build_frontend_login_redirect(frontend_url, oauth_token=token))
         
     except Exception as e:
         logger.error(f"oauth_google_callback error: {e}")
         from app.services.oauth_service import get_oauth_service
         frontend_url = get_oauth_service().frontend_url
-        return redirect(f"{frontend_url}/user/login?oauth_error=server_error")
+        return redirect(_build_frontend_login_redirect(frontend_url, oauth_error='server_error'))
 
 
 @auth_bp.route('/oauth/github', methods=['GET'])
@@ -889,22 +912,22 @@ def oauth_github_callback():
         frontend_url = oauth.frontend_url
         
         if error:
-            return redirect(f"{frontend_url}/user/login?oauth_error={error}")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error=error))
         
         if not code or not state:
-            return redirect(f"{frontend_url}/user/login?oauth_error=missing_params")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error='missing_params'))
         
         # Handle callback
         success, result = oauth.handle_github_callback(code, state)
         if not success:
             error_msg = result.get('error', 'unknown_error')
-            return redirect(f"{frontend_url}/user/login?oauth_error={error_msg}")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error=error_msg))
         
         # Get or create user
         user_success, user_result = oauth.get_or_create_user_from_oauth(result)
         if not user_success:
             error_msg = user_result.get('error', 'user_creation_failed')
-            return redirect(f"{frontend_url}/user/login?oauth_error={error_msg}")
+            return redirect(_build_frontend_login_redirect(frontend_url, oauth_error=error_msg))
         
         # Generate token
         token = generate_token(
@@ -918,13 +941,13 @@ def oauth_github_callback():
                                    {'provider': 'github'})
         
         # Redirect to frontend with token
-        return redirect(f"{frontend_url}/user/login?oauth_token={token}")
+        return redirect(_build_frontend_login_redirect(frontend_url, oauth_token=token))
         
     except Exception as e:
         logger.error(f"oauth_github_callback error: {e}")
         from app.services.oauth_service import get_oauth_service
         frontend_url = get_oauth_service().frontend_url
-        return redirect(f"{frontend_url}/user/login?oauth_error=server_error")
+        return redirect(_build_frontend_login_redirect(frontend_url, oauth_error='server_error'))
 
 
 # =============================================================================
