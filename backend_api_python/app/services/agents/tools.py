@@ -525,13 +525,13 @@ class AgentTools:
             
             if market == 'AShare':
                 # AShare CN keywords
-                search_query = f'"{search_name}" {symbol} (利好 OR 利空 OR 财报 OR 公告 OR 业绩) after:{datetime.now().year-1}'
+                search_query = f'{search_name} {symbol} (利好 OR 利空 OR 财报 OR 公告 OR 业绩) after:{datetime.now().year-1}'
             elif market == 'HShare':
-                search_query = f'"{search_name}" {symbol} (港股 OR 股价 OR 业绩) after:{datetime.now().year-1}'
+                search_query = f'{search_name} {symbol} (港股 OR 股价 OR 业绩) after:{datetime.now().year-1}'
             elif market == 'Crypto':
-                search_query = f'"{search_name}" {symbol} crypto news analysis'
+                search_query = f'{search_name} {symbol} crypto news analysis'
             else:
-                search_query = f'"{search_name}" {symbol} stock news'
+                search_query = f'{search_name} {symbol} stock news'
             
             logger.info(f"Running news search: {search_query}")
             # Google CSE uses `dateRestrict` as a separate param; SearchService supports it.
