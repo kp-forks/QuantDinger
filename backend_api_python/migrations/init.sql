@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS qd_users (
     email_verified BOOLEAN DEFAULT FALSE,  -- 邮箱是否已验证
     referred_by INTEGER,                   -- 邀请人ID
     notification_settings TEXT DEFAULT '', -- 用户通知配置 JSON (telegram_chat_id, default_channels等)
+    token_version INTEGER DEFAULT 1,       -- Token版本号，用于单一客户端登录控制
     last_login_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -287,6 +288,11 @@ CREATE TABLE IF NOT EXISTS qd_indicator_codes (
     price DECIMAL(10,2) NOT NULL DEFAULT 0,
     is_encrypted INTEGER NOT NULL DEFAULT 0,
     preview_image VARCHAR(500) DEFAULT '',
+    -- Review status fields (for admin review feature)
+    review_status VARCHAR(20) DEFAULT 'approved',  -- pending/approved/rejected
+    review_note TEXT DEFAULT '',
+    reviewed_at TIMESTAMP,
+    reviewed_by INTEGER,
     createtime BIGINT,
     updatetime BIGINT,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -294,6 +300,7 @@ CREATE TABLE IF NOT EXISTS qd_indicator_codes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_indicator_codes_user_id ON qd_indicator_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_indicator_review_status ON qd_indicator_codes(review_status);
 
 -- =============================================================================
 -- 8. AI Decisions
@@ -615,6 +622,129 @@ CREATE TABLE IF NOT EXISTS qd_reflection_records (
 
 CREATE INDEX IF NOT EXISTS idx_reflection_status ON qd_reflection_records(status, target_check_date);
 CREATE INDEX IF NOT EXISTS idx_reflection_market ON qd_reflection_records(market, symbol);
+
+-- =============================================================================
+-- 19.5. Analysis Memory (Fast AI Analysis Memory System)
+-- =============================================================================
+-- Stores AI analysis results for history, feedback, and learning.
+
+CREATE TABLE IF NOT EXISTS qd_analysis_memory (
+    id SERIAL PRIMARY KEY,
+    market VARCHAR(50) NOT NULL,
+    symbol VARCHAR(50) NOT NULL,
+    decision VARCHAR(10) NOT NULL,
+    confidence INT DEFAULT 50,
+    price_at_analysis DECIMAL(24, 8),
+    entry_price DECIMAL(24, 8),
+    stop_loss DECIMAL(24, 8),
+    take_profit DECIMAL(24, 8),
+    summary TEXT,
+    reasons JSONB,
+    risks JSONB,
+    scores JSONB,
+    indicators_snapshot JSONB,
+    raw_result JSONB,                           -- Full analysis result for history replay
+    created_at TIMESTAMP DEFAULT NOW(),
+    validated_at TIMESTAMP,
+    actual_outcome VARCHAR(20),
+    actual_return_pct DECIMAL(10, 4),
+    was_correct BOOLEAN,
+    user_feedback VARCHAR(20),                  -- helpful/not_helpful
+    feedback_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_symbol ON qd_analysis_memory(market, symbol);
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_created ON qd_analysis_memory(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_validated ON qd_analysis_memory(validated_at) WHERE validated_at IS NOT NULL;
+
+-- =============================================================================
+-- 20. Migration: Add token_version for single-client login
+-- =============================================================================
+-- This migration adds token_version column for enforcing single-client login.
+-- When a user logs in from a new device, the token_version is incremented,
+-- invalidating all previous tokens and forcing other sessions to logout.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_users' AND column_name = 'token_version'
+    ) THEN
+        ALTER TABLE qd_users ADD COLUMN token_version INTEGER DEFAULT 1;
+        RAISE NOTICE 'Added token_version column to qd_users table';
+    END IF;
+END $$;
+
+-- =============================================================================
+-- 21. Indicator Community Tables
+-- =============================================================================
+
+-- Indicator Purchases (购买记录)
+CREATE TABLE IF NOT EXISTS qd_indicator_purchases (
+    id SERIAL PRIMARY KEY,
+    indicator_id INTEGER NOT NULL REFERENCES qd_indicator_codes(id) ON DELETE CASCADE,
+    buyer_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    seller_id INTEGER NOT NULL REFERENCES qd_users(id),
+    price DECIMAL(10,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(indicator_id, buyer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchases_indicator ON qd_indicator_purchases(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_buyer ON qd_indicator_purchases(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_seller ON qd_indicator_purchases(seller_id);
+
+-- Indicator Comments (评论)
+CREATE TABLE IF NOT EXISTS qd_indicator_comments (
+    id SERIAL PRIMARY KEY,
+    indicator_id INTEGER NOT NULL REFERENCES qd_indicator_codes(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    rating INTEGER DEFAULT 5 CHECK (rating >= 1 AND rating <= 5),
+    content TEXT DEFAULT '',
+    parent_id INTEGER REFERENCES qd_indicator_comments(id) ON DELETE CASCADE,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_indicator ON qd_indicator_comments(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_comments_user ON qd_indicator_comments(user_id);
+
+-- Add community stats columns to qd_indicator_codes
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'purchase_count'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN purchase_count INTEGER DEFAULT 0;
+        RAISE NOTICE 'Added purchase_count column to qd_indicator_codes';
+    END IF;
+    
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'avg_rating'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN avg_rating DECIMAL(3,2) DEFAULT 0;
+        RAISE NOTICE 'Added avg_rating column to qd_indicator_codes';
+    END IF;
+    
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'rating_count'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN rating_count INTEGER DEFAULT 0;
+        RAISE NOTICE 'Added rating_count column to qd_indicator_codes';
+    END IF;
+    
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'view_count'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN view_count INTEGER DEFAULT 0;
+        RAISE NOTICE 'Added view_count column to qd_indicator_codes';
+    END IF;
+END $$;
 
 -- =============================================================================
 -- Completion Notice

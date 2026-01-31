@@ -15,7 +15,7 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def generate_token(user_id: int, username: str, role: str = 'user') -> str:
+def generate_token(user_id: int, username: str, role: str = 'user', token_version: int = 1) -> str:
     """
     Generate JWT token with user information.
     
@@ -23,6 +23,7 @@ def generate_token(user_id: int, username: str, role: str = 'user') -> str:
         user_id: User ID
         username: Username
         role: User role (admin/manager/user/viewer)
+        token_version: Token version for single-client enforcement
     
     Returns:
         JWT token string
@@ -34,6 +35,7 @@ def generate_token(user_id: int, username: str, role: str = 'user') -> str:
             'sub': username,
             'user_id': user_id,
             'role': role,
+            'token_version': token_version,  # 用于单一客户端登录控制
         }
         return jwt.encode(
             payload,
@@ -57,6 +59,17 @@ def verify_token(token: str) -> dict:
     """
     try:
         payload = jwt.decode(token, Config.SECRET_KEY, algorithms=['HS256'])
+        
+        # 验证 token_version（单一客户端登录控制）
+        user_id = payload.get('user_id')
+        token_version = payload.get('token_version')
+        
+        if user_id and token_version is not None:
+            # 检查数据库中的 token_version 是否匹配
+            if not _verify_token_version(user_id, token_version):
+                logger.debug(f"Token version mismatch for user {user_id}: expected current, got {token_version}")
+                return None
+        
         return payload
     except jwt.ExpiredSignatureError:
         logger.debug("Token expired")
@@ -64,6 +77,40 @@ def verify_token(token: str) -> dict:
     except jwt.InvalidTokenError as e:
         logger.debug(f"Invalid token: {e}")
         return None
+
+
+def _verify_token_version(user_id: int, token_version: int) -> bool:
+    """
+    验证 token 版本是否与数据库中存储的版本匹配。
+    用于实现单一客户端登录（踢出重复登录）。
+    
+    Args:
+        user_id: 用户ID
+        token_version: Token中的版本号
+    
+    Returns:
+        True if version matches, False otherwise
+    """
+    try:
+        from app.utils.db import get_db_connection
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                "SELECT token_version FROM qd_users WHERE id = ?",
+                (user_id,)
+            )
+            row = cur.fetchone()
+            cur.close()
+            
+            if not row:
+                return False
+            
+            db_token_version = row.get('token_version') or 1
+            return int(token_version) == int(db_token_version)
+    except Exception as e:
+        logger.error(f"_verify_token_version failed: {e}")
+        # 如果验证失败，为了安全起见，返回 False
+        return False
 
 
 def get_current_user_id() -> int:

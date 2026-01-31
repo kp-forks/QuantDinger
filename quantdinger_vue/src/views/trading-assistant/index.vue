@@ -413,6 +413,13 @@
                         <span v-if="item.name" class="symbol-name-extra">{{ item.name }}</span>
                       </div>
                     </a-select-option>
+                    <!-- 添加交易对选项 -->
+                    <a-select-option key="__add_symbol_option__" value="__add_symbol_option__" class="add-symbol-option">
+                      <div style="width: 100%; text-align: center; padding: 4px 0; color: #1890ff; cursor: pointer;">
+                        <a-icon type="plus" style="margin-right: 4px;" />
+                        <span>{{ $t('trading-assistant.form.addSymbol') }}</span>
+                      </div>
+                    </a-select-option>
                   </a-select>
                   <!-- 创建模式：多选 -->
                   <a-select
@@ -421,9 +428,9 @@
                     mode="multiple"
                     :placeholder="$t('trading-assistant.placeholders.selectSymbols')"
                     show-search
-                    :filter-option="filterWatchlistOption"
+                    :filter-option="filterWatchlistOptionWithAdd"
                     :loading="loadingWatchlist"
-                    @change="handleMultiSymbolChange"
+                    @change="handleMultiSymbolChangeWithAdd"
                     :getPopupContainer="(triggerNode) => triggerNode.parentNode"
                     :maxTagCount="3">
                     <a-select-option
@@ -436,6 +443,13 @@
                         </a-tag>
                         <span class="symbol-name">{{ item.symbol }}</span>
                         <span v-if="item.name" class="symbol-name-extra">{{ item.name }}</span>
+                      </div>
+                    </a-select-option>
+                    <!-- 添加交易对选项 -->
+                    <a-select-option key="__add_symbol_option__" value="__add_symbol_option__" class="add-symbol-option">
+                      <div style="width: 100%; text-align: center; padding: 4px 0; color: #1890ff; cursor: pointer;">
+                        <a-icon type="plus" style="margin-right: 4px;" />
+                        <span>{{ $t('trading-assistant.form.addSymbol') }}</span>
                       </div>
                     </a-select-option>
                   </a-select>
@@ -926,6 +940,12 @@
                   <!-- IBKR specific configuration -->
                   <template v-if="currentBrokerId === 'ibkr'">
                     <a-alert
+                      type="warning"
+                      show-icon
+                      style="margin-bottom: 16px;"
+                      :message="$t('trading-assistant.form.localDeploymentRequired')"
+                      :description="$t('trading-assistant.form.localDeploymentHint')" />
+                    <a-alert
                       type="info"
                       show-icon
                       style="margin-bottom: 16px;"
@@ -992,6 +1012,12 @@
 
                   <!-- MT5 specific configuration -->
                   <template v-if="currentBrokerId === 'mt5'">
+                    <a-alert
+                      type="warning"
+                      show-icon
+                      style="margin-bottom: 16px;"
+                      :message="$t('trading-assistant.form.localDeploymentRequired')"
+                      :description="$t('trading-assistant.form.localDeploymentHint')" />
                     <a-alert
                       type="info"
                       show-icon
@@ -1158,12 +1184,120 @@
         </a-button>
       </template>
     </a-modal>
+
+    <!-- 添加交易对弹窗 -->
+    <a-modal
+      :title="$t('trading-assistant.form.addSymbolTitle')"
+      :visible="showAddSymbolModal"
+      @ok="handleConfirmAddSymbol"
+      @cancel="handleCloseAddSymbolModal"
+      :confirmLoading="addingSymbol"
+      width="600px"
+      :okText="$t('trading-assistant.form.confirmAdd')"
+      :cancelText="$t('trading-assistant.form.cancel')">
+      <div class="add-symbol-modal-content">
+        <!-- 市场类型Tab -->
+        <a-tabs v-model="addSymbolMarket" @change="handleAddSymbolMarketChange" class="market-tabs">
+          <a-tab-pane
+            v-for="marketType in addSymbolMarketTypes"
+            :key="marketType.value"
+            :tab="$t(marketType.i18nKey || `dashboard.analysis.market.${marketType.value}`)">
+          </a-tab-pane>
+        </a-tabs>
+
+        <!-- 搜索输入框 -->
+        <div class="symbol-search-section">
+          <a-input-search
+            v-model="addSymbolKeyword"
+            :placeholder="$t('dashboard.analysis.modal.addStock.searchOrInputPlaceholder')"
+            @search="handleSearchSymbol"
+            @change="handleSymbolSearchInputChange"
+            :loading="searchingSymbol"
+            size="large"
+            allow-clear>
+            <a-button slot="enterButton" type="primary" icon="search">
+              {{ $t('dashboard.analysis.modal.addStock.search') }}
+            </a-button>
+          </a-input-search>
+        </div>
+
+        <!-- 搜索结果 -->
+        <div v-if="symbolSearchResults.length > 0" class="search-results-section">
+          <div class="section-title">
+            <a-icon type="search" style="margin-right: 4px;" />
+            {{ $t('dashboard.analysis.modal.addStock.searchResults') }}
+          </div>
+          <a-list
+            :data-source="symbolSearchResults"
+            :loading="searchingSymbol"
+            size="small"
+            class="symbol-list">
+            <a-list-item slot="renderItem" slot-scope="item" class="symbol-list-item" @click="handleSelectAddSymbol(item)">
+              <a-list-item-meta>
+                <template slot="title">
+                  <div class="symbol-item-content">
+                    <span class="symbol-code">{{ item.symbol }}</span>
+                    <span class="symbol-name">{{ item.name }}</span>
+                    <a-tag v-if="item.exchange" size="small" color="blue" style="margin-left: 8px;">
+                      {{ item.exchange }}
+                    </a-tag>
+                  </div>
+                </template>
+              </a-list-item-meta>
+            </a-list-item>
+          </a-list>
+        </div>
+
+        <!-- 热门标的 -->
+        <div class="hot-symbols-section">
+          <div class="section-title">
+            <a-icon type="fire" style="color: #ff4d4f; margin-right: 4px;" />
+            {{ $t('dashboard.analysis.modal.addStock.hotSymbols') }}
+          </div>
+          <a-spin :spinning="loadingHotSymbols">
+            <a-list
+              v-if="hotSymbols.length > 0"
+              :data-source="hotSymbols"
+              size="small"
+              class="symbol-list">
+              <a-list-item slot="renderItem" slot-scope="item" class="symbol-list-item" @click="handleSelectAddSymbol(item)">
+                <a-list-item-meta>
+                  <template slot="title">
+                    <div class="symbol-item-content">
+                      <span class="symbol-code">{{ item.symbol }}</span>
+                      <span class="symbol-name">{{ item.name }}</span>
+                      <a-tag v-if="item.exchange" size="small" color="orange" style="margin-left: 8px;">
+                        {{ item.exchange }}
+                      </a-tag>
+                    </div>
+                  </template>
+                </a-list-item-meta>
+              </a-list-item>
+            </a-list>
+            <a-empty v-else :description="$t('dashboard.analysis.modal.addStock.noHotSymbols')" :image="false" />
+          </a-spin>
+        </div>
+
+        <!-- 选中的标的显示 -->
+        <div v-if="selectedAddSymbol" class="selected-symbol-section">
+          <div class="section-title">
+            <a-icon type="check-circle" style="color: #52c41a; margin-right: 4px;" />
+            {{ $t('dashboard.analysis.modal.addStock.selectedSymbol') }}
+          </div>
+          <div class="selected-symbol-info">
+            <a-tag :color="getMarketColor(addSymbolMarket)" style="margin-right: 8px;">{{ addSymbolMarket }}</a-tag>
+            <span class="symbol-code">{{ selectedAddSymbol.symbol }}</span>
+            <span v-if="selectedAddSymbol.name" class="symbol-name">{{ selectedAddSymbol.name }}</span>
+          </div>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script>
 import { getStrategyList, startStrategy, stopStrategy, deleteStrategy, updateStrategy, testExchangeConnection, getStrategyEquityCurve, batchCreateStrategies, batchStartStrategies, batchStopStrategies, batchDeleteStrategies } from '@/api/strategy'
-import { getWatchlist } from '@/api/market'
+import { getWatchlist, addWatchlist, searchSymbols, getHotSymbols } from '@/api/market'
 import { listExchangeCredentials, getExchangeCredential, createExchangeCredential } from '@/api/credentials'
 import { getNotificationSettings } from '@/api/user'
 import { baseMixin } from '@/store/app-mixin'
@@ -1511,7 +1645,27 @@ export default {
       // 多币种选择（创建模式）
       selectedSymbols: [],
       // 策略组折叠状态
-      collapsedGroups: {}
+      collapsedGroups: {},
+      // 添加交易对弹窗相关
+      showAddSymbolModal: false,
+      addSymbolMarket: 'Crypto',
+      addSymbolMarketTypes: [
+        { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
+        { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
+        { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
+        { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' },
+        { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
+        { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
+      ],
+      addSymbolKeyword: '',
+      searchingSymbol: false,
+      symbolSearchResults: [],
+      selectedAddSymbol: null,
+      hasSearchedSymbol: false,
+      addingSymbol: false,
+      hotSymbols: [],
+      loadingHotSymbols: false,
+      searchTimer: null
       // Market category is inferred from Step 1 watchlist symbol ("Market:SYMBOL").
     }
   },
@@ -1561,9 +1715,237 @@ export default {
         this.loadingWatchlist = false
       }
     },
+    // ====== 添加交易对弹窗相关方法 ======
+    handleCloseAddSymbolModal () {
+      this.showAddSymbolModal = false
+      this.addSymbolKeyword = ''
+      this.symbolSearchResults = []
+      this.selectedAddSymbol = null
+      this.hasSearchedSymbol = false
+    },
+    handleAddSymbolMarketChange (market) {
+      this.addSymbolMarket = market
+      this.addSymbolKeyword = ''
+      this.symbolSearchResults = []
+      this.selectedAddSymbol = null
+      this.hasSearchedSymbol = false
+      // 加载该市场的热门标的
+      this.loadHotSymbols(market)
+    },
+    // 搜索输入框变化时的处理（防抖）
+    handleSymbolSearchInputChange (e) {
+      const keyword = e.target.value
+      this.addSymbolKeyword = keyword
+
+      // 清除之前的定时器
+      if (this.searchTimer) {
+        clearTimeout(this.searchTimer)
+      }
+
+      // 如果关键词为空，清空搜索结果和状态
+      if (!keyword || keyword.trim() === '') {
+        this.symbolSearchResults = []
+        this.hasSearchedSymbol = false
+        this.selectedAddSymbol = null
+        return
+      }
+
+      // 防抖：500ms后执行搜索
+      this.searchTimer = setTimeout(() => {
+        this.searchSymbolsInModal(keyword)
+      }, 500)
+    },
+    // 搜索或直接添加（整合逻辑）
+    async handleSearchSymbol (keyword) {
+      if (!keyword || !keyword.trim()) {
+        return
+      }
+
+      if (!this.addSymbolMarket) {
+        this.$message.warning(this.$t('dashboard.analysis.modal.addStock.pleaseSelectMarket'))
+        return
+      }
+
+      // 如果有搜索结果，不处理（让用户选择）
+      if (this.symbolSearchResults.length > 0) {
+        return
+      }
+
+      // 如果没有搜索结果，直接添加
+      if (this.hasSearchedSymbol && this.symbolSearchResults.length === 0) {
+        this.handleDirectAdd()
+      } else {
+        // 执行搜索
+        this.searchSymbolsInModal(keyword)
+      }
+    },
+    // 搜索标的（在添加股票弹窗中）
+    async searchSymbolsInModal (keyword) {
+      if (!keyword || keyword.trim() === '') {
+        this.symbolSearchResults = []
+        this.hasSearchedSymbol = false
+        return
+      }
+
+      if (!this.addSymbolMarket) {
+        return
+      }
+
+      this.searchingSymbol = true
+      this.hasSearchedSymbol = true
+
+      try {
+        const res = await searchSymbols({
+          market: this.addSymbolMarket,
+          keyword: keyword.trim()
+        })
+        if (res && res.code === 1 && Array.isArray(res.data)) {
+          this.symbolSearchResults = res.data
+        } else {
+          this.symbolSearchResults = []
+        }
+      } catch (e) {
+        this.symbolSearchResults = []
+      } finally {
+        this.searchingSymbol = false
+      }
+    },
+    // 直接添加（搜索无结果时）
+    handleDirectAdd () {
+      if (!this.addSymbolKeyword || !this.addSymbolKeyword.trim()) {
+        this.$message.warning(this.$t('dashboard.analysis.modal.addStock.pleaseEnterSymbol'))
+        return
+      }
+
+      if (!this.addSymbolMarket) {
+        this.$message.warning(this.$t('dashboard.analysis.modal.addStock.pleaseSelectMarket'))
+        return
+      }
+
+      // 设置选中的标的（手动输入，名称会在后端获取）
+      this.selectedAddSymbol = {
+        market: this.addSymbolMarket,
+        symbol: this.addSymbolKeyword.trim().toUpperCase(),
+        name: '' // 名称由后端通过API获取
+      }
+    },
+    handleSelectAddSymbol (item) {
+      this.selectedAddSymbol = {
+        market: this.addSymbolMarket,
+        symbol: item.symbol,
+        name: item.name || ''
+      }
+    },
+    // 加载热门标的
+    async loadHotSymbols (market) {
+      if (!market) {
+        market = this.addSymbolMarket || 'Crypto'
+      }
+
+      if (!market) {
+        return
+      }
+
+      this.loadingHotSymbols = true
+      try {
+        const res = await getHotSymbols({
+          market: market,
+          limit: 10
+        })
+        if (res && res.code === 1 && res.data) {
+          this.hotSymbols = res.data
+        } else {
+          this.hotSymbols = []
+        }
+      } catch (error) {
+        this.hotSymbols = []
+      } finally {
+        this.loadingHotSymbols = false
+      }
+    },
+    async handleConfirmAddSymbol () {
+      // 确定要添加的交易对
+      let market = ''
+      let symbol = ''
+
+      // 检查是否选中了标的（从数据库选择或手动输入）
+      if (this.selectedAddSymbol) {
+        market = this.selectedAddSymbol.market
+        symbol = this.selectedAddSymbol.symbol.toUpperCase()
+      } else if (this.addSymbolKeyword && this.addSymbolKeyword.trim()) {
+        // 如果没有选中，但搜索框有输入，使用搜索框的值
+        if (!this.addSymbolMarket) {
+          this.$message.warning(this.$t('dashboard.analysis.modal.addStock.pleaseSelectMarket'))
+          return
+        }
+        market = this.addSymbolMarket
+        symbol = this.addSymbolKeyword.trim().toUpperCase()
+      } else {
+        this.$message.warning(this.$t('dashboard.analysis.modal.addStock.pleaseSelectOrEnterSymbol'))
+        return
+      }
+
+      this.addingSymbol = true
+      try {
+        // 调用添加自选API
+        const res = await addWatchlist({
+          userid: 1,
+          market: market,
+          symbol: symbol
+        })
+        if (res && res.code === 1) {
+          this.$message.success(this.$t('dashboard.analysis.message.addStockSuccess'))
+          // 重新加载自选列表
+          await this.loadWatchlist()
+          // 自动选中新添加的交易对
+          const newValue = `${market}:${symbol}`
+          if (this.isEditMode) {
+            this.form.setFieldsValue({ symbol: newValue })
+            this.handleWatchlistSymbolChange(newValue)
+          } else {
+            // 多选模式：添加到已选列表
+            if (!this.selectedSymbols.includes(newValue)) {
+              this.selectedSymbols = [...this.selectedSymbols, newValue]
+            }
+            this.handleMultiSymbolChange(this.selectedSymbols)
+          }
+          // 关闭弹窗
+          this.handleCloseAddSymbolModal()
+        } else {
+          this.$message.error(res?.msg || this.$t('dashboard.analysis.message.addStockFailed'))
+        }
+      } catch (e) {
+        const errorMsg = e?.response?.data?.msg || e?.message || this.$t('dashboard.analysis.message.addStockFailed')
+        this.$message.error(errorMsg)
+      } finally {
+        this.addingSymbol = false
+      }
+    },
+    // ====== 添加交易对弹窗相关方法 END ======
     filterWatchlistOption (input, option) {
       const value = option.componentOptions?.propsData?.value || ''
+      // 始终显示"添加"选项
+      if (value === '__add_symbol_option__') return true
       return String(value).toLowerCase().includes(String(input || '').toLowerCase())
+    },
+    filterWatchlistOptionWithAdd (input, option) {
+      const value = option.componentOptions?.propsData?.value || ''
+      // 始终显示"添加"选项
+      if (value === '__add_symbol_option__') return true
+      return String(value).toLowerCase().includes(String(input || '').toLowerCase())
+    },
+    handleMultiSymbolChangeWithAdd (vals) {
+      // 检查是否点击了"添加"选项
+      if (vals && vals.includes('__add_symbol_option__')) {
+        // 从选中列表中移除特殊选项
+        this.selectedSymbols = vals.filter(v => v !== '__add_symbol_option__')
+        // 打开添加弹窗
+        this.showAddSymbolModal = true
+        // 加载热门标的
+        this.loadHotSymbols(this.addSymbolMarket)
+        return
+      }
+      this.handleMultiSymbolChange(vals)
     },
     getMarketColor (market) {
       const colors = {
@@ -1577,6 +1959,18 @@ export default {
       return colors[market] || 'default'
     },
     handleWatchlistSymbolChange (val) {
+      // 检查是否点击了"添加"选项
+      if (val === '__add_symbol_option__') {
+        // 重置表单值（不选中特殊选项）
+        this.$nextTick(() => {
+          this.form.setFieldsValue({ symbol: undefined })
+        })
+        // 打开添加弹窗
+        this.showAddSymbolModal = true
+        // 加载热门标的
+        this.loadHotSymbols(this.addSymbolMarket)
+        return
+      }
       // val format: "Market:SYMBOL" (same as indicator-analysis page)
       if (!val || typeof val !== 'string' || !val.includes(':')) {
         return
@@ -2704,7 +3098,8 @@ export default {
               account: account
             })
 
-            if (res.data && res.data.success) {
+            // Note: request.js interceptor returns response.data directly, so res is the JSON object
+            if (res && res.success) {
               this.testResult = {
                 success: true,
                 message: this.$t('trading-assistant.exchange.ibkrConnectionSuccess')
@@ -2713,14 +3108,15 @@ export default {
             } else {
               this.testResult = {
                 success: false,
-                message: res.data?.error || this.$t('trading-assistant.exchange.ibkrConnectionFailed')
+                message: res?.error || this.$t('trading-assistant.exchange.ibkrConnectionFailed')
               }
               this.$message.error(this.testResult.message)
             }
           } catch (error) {
+            const baseError = error.response?.data?.error || error?.error || error.message || this.$t('trading-assistant.exchange.ibkrConnectionFailed')
             this.testResult = {
               success: false,
-              message: error.response?.data?.error || error.message || this.$t('trading-assistant.exchange.ibkrConnectionFailed')
+              message: `${baseError} - ${this.$t('trading-assistant.exchange.checkLocalDeployment')}`
             }
             this.$message.error(this.testResult.message)
           } finally {
@@ -2756,7 +3152,8 @@ export default {
               terminal_path: terminalPath
             })
 
-            if (res.data && res.data.success) {
+            // Note: request.js interceptor returns response.data directly, so res is the JSON object
+            if (res && res.success) {
               this.testResult = {
                 success: true,
                 message: this.$t('trading-assistant.exchange.mt5ConnectionSuccess')
@@ -2765,14 +3162,15 @@ export default {
             } else {
               this.testResult = {
                 success: false,
-                message: res.data?.error || this.$t('trading-assistant.exchange.mt5ConnectionFailed')
+                message: res?.error || this.$t('trading-assistant.exchange.mt5ConnectionFailed')
               }
               this.$message.error(this.testResult.message)
             }
           } catch (error) {
+            const baseError = error.response?.data?.error || error?.error || error.message || this.$t('trading-assistant.exchange.mt5ConnectionFailed')
             this.testResult = {
               success: false,
-              message: error.response?.data?.error || error.message || this.$t('trading-assistant.exchange.mt5ConnectionFailed')
+              message: `${baseError} - ${this.$t('trading-assistant.exchange.checkLocalDeployment')}`
             }
             this.$message.error(this.testResult.message)
           } finally {
@@ -4692,6 +5090,80 @@ export default {
       font-size: 13px;
       padding: 0 12px;
       height: 32px;
+    }
+  }
+}
+
+// 添加交易对弹窗样式
+.add-symbol-modal-content {
+  .market-tabs {
+    margin-bottom: 16px;
+  }
+
+  .symbol-search-section {
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+  }
+
+  .search-results-section,
+  .hot-symbols-section {
+    margin-bottom: 16px;
+  }
+
+  .symbol-list {
+    .symbol-list-item {
+      cursor: pointer;
+      transition: background-color 0.3s;
+      padding: 8px 12px;
+      border-radius: 4px;
+
+      &:hover {
+        background-color: #f5f5f5;
+      }
+    }
+  }
+
+  .symbol-item-content {
+    display: flex;
+    align-items: center;
+
+    .symbol-code {
+      font-weight: 500;
+      margin-right: 8px;
+    }
+
+    .symbol-name {
+      color: rgba(0, 0, 0, 0.45);
+    }
+  }
+
+  .selected-symbol-section {
+    padding: 12px;
+    background-color: #f6ffed;
+    border: 1px solid #b7eb8f;
+    border-radius: 4px;
+    margin-top: 16px;
+
+    .selected-symbol-info {
+      display: flex;
+      align-items: center;
+      margin-top: 8px;
+
+      .symbol-code {
+        font-weight: 500;
+        margin-right: 8px;
+      }
+
+      .symbol-name {
+        color: rgba(0, 0, 0, 0.45);
+      }
     }
   }
 }

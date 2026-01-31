@@ -19,8 +19,3 @@ yarn-error.log*
 *.sln
 *.sw*
 package-lock.json
-
-# Pyodide (large offline runtime assets)
-# - Download via `scripts/fetch_pyodide.ps1`
-# - If you want fully offline distribution, remove this ignore and commit the assets.
-/public/assets/pyodide/

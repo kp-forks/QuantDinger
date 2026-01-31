@@ -555,6 +555,11 @@ class TradingExecutor:
                 trade_direction = 'long'  # 现货只能做多
                 logger.info(f"Strategy {strategy_id} spot trading; force trade_direction=long")
 
+            # 获取市场类别（Crypto, USStock, Forex, Futures, AShare, HShare）
+            # 这决定了使用哪个数据源来获取价格和K线数据
+            market_category = (strategy.get('market_category') or 'Crypto').strip()
+            logger.info(f"Strategy {strategy_id} market_category: {market_category}")
+
             # 初始化交易所连接（信号模式下无需真实连接）
             exchange = None
             
@@ -611,7 +616,7 @@ class TradingExecutor:
             # ============================================
             # logger.info(f"策略 {strategy_id} 初始化：获取历史K线数据...")
             history_limit = int(os.getenv('K_LINE_HISTORY_GET_NUMBER', 500))
-            klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit)
+            klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit, market_category=market_category)
             if not klines or len(klines) < 2:
                 logger.error(f"Strategy {strategy_id} failed to fetch K-lines")
                 return
@@ -719,16 +724,16 @@ class TradingExecutor:
                     # ============================================
                     # 1. Fetch current price once per tick
                     # ============================================
-                    current_price = self._fetch_current_price(exchange, symbol, market_type=market_type)
+                    current_price = self._fetch_current_price(exchange, symbol, market_type=market_type, market_category=market_category)
                     if current_price is None:
-                        logger.warning(f"Strategy {strategy_id} failed to fetch current price")
+                        logger.warning(f"Strategy {strategy_id} failed to fetch current price for {market_category}:{symbol}")
                         continue
 
                     # ============================================
                     # 2. 检查是否需要更新K线（每个K线周期更新一次，从API拉取）
                     # ============================================
                     if current_time - last_kline_update_time >= kline_update_interval:
-                        klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit)
+                        klines = self._fetch_latest_kline(symbol, timeframe, limit=history_limit, market_category=market_category)
                         if klines and len(klines) >= 2:
                             df = self._klines_to_dataframe(klines)
                             if len(df) > 0:
@@ -978,6 +983,7 @@ class TradingExecutor:
                                 leverage=leverage,
                                 initial_capital=initial_capital,
                                 market_type=market_type,
+                                market_category=market_category,
                                 execution_mode=execution_mode,
                                 notification_config=notification_config,
                                 trading_config=trading_config,
@@ -1041,7 +1047,8 @@ class TradingExecutor:
                         id, strategy_name, strategy_type, status,
                         initial_capital, leverage, decide_interval,
                         execution_mode, notification_config,
-                        indicator_config, exchange_config, trading_config, ai_model_config
+                        indicator_config, exchange_config, trading_config, ai_model_config,
+                        market_category
                     FROM qd_strategies_trading
                     WHERE id = %s
                 """
@@ -1104,25 +1111,39 @@ class TradingExecutor:
         """(Mock) 信号模式不需要真实交易所连接"""
         return None
     
-    def _fetch_latest_kline(self, symbol: str, timeframe: str, limit: int = 500) -> List[Dict[str, Any]]:
-        """获取最新K线数据（优先从缓存获取）"""
+    def _fetch_latest_kline(self, symbol: str, timeframe: str, limit: int = 500, market_category: str = 'Crypto') -> List[Dict[str, Any]]:
+        """获取最新K线数据（优先从缓存获取）
+        
+        Args:
+            symbol: 交易对/代码
+            timeframe: 时间周期
+            limit: 数据条数
+            market_category: 市场类型 (Crypto, USStock, Forex, Futures, AShare, HShare)
+        """
         try:
             # 使用 KlineService 获取K线数据（自动处理缓存）
             return self.kline_service.get_kline(
-                market='Crypto',
+                market=market_category,
                 symbol=symbol,
                 timeframe=timeframe,
                 limit=limit,
                 before_time=int(time.time())
             )
         except Exception as e:
-            logger.error(f"Failed to fetch K-lines: {str(e)}")
+            logger.error(f"Failed to fetch K-lines for {market_category}:{symbol}: {str(e)}")
             return []
     
-    def _fetch_current_price(self, exchange: Any, symbol: str, market_type: str = None) -> Optional[float]:
-        """获取当前价格 (改用 DataSource)"""
+    def _fetch_current_price(self, exchange: Any, symbol: str, market_type: str = None, market_category: str = 'Crypto') -> Optional[float]:
+        """获取当前价格 (根据 market_category 选择正确的数据源)
+        
+        Args:
+            exchange: 交易所实例（信号模式下为 None）
+            symbol: 交易对/代码
+            market_type: 交易类型 (swap/spot)
+            market_category: 市场类型 (Crypto, USStock, Forex, Futures, AShare, HShare)
+        """
         # Local in-memory cache first
-        cache_key = (symbol or "").strip().upper()
+        cache_key = f"{market_category}:{(symbol or '').strip().upper()}"
         if cache_key and self._price_cache_ttl_sec > 0:
             now = time.time()
             try:
@@ -1138,12 +1159,9 @@ class TradingExecutor:
                 pass
             
         try:
-            # 默认使用 binance 获取价格 (或者根据配置)
-            # 简单起见，这里硬编码或使用 generic source
-            ds = DataSourceFactory.get_data_source('binance')
-            # normalized symbol handling is tricky without exchange object. 
-            # But usually DataSource expects standard 'BTC/USDT'
-            ticker = ds.get_ticker(symbol)
+            # 根据 market_category 选择正确的数据源
+            # 支持: Crypto, USStock, Forex, Futures, AShare, HShare
+            ticker = DataSourceFactory.get_ticker(market_category, symbol)
             if ticker:
                 price = float(ticker.get('last') or ticker.get('close') or 0)
                 if price > 0:
@@ -1155,7 +1173,7 @@ class TradingExecutor:
                             pass
                     return price
         except Exception as e:
-            logger.warning(f"Failed to fetch price: {e}")
+            logger.warning(f"Failed to fetch price for {market_category}:{symbol}: {e}")
             
         return None
 
@@ -1887,6 +1905,7 @@ class TradingExecutor:
         leverage: int,
         initial_capital: float,
         market_type: str = 'swap',
+        market_category: str = 'Crypto',
         margin_mode: str = 'cross',
         stop_loss_price: float = None,
         take_profit_price: float = None,
@@ -2013,6 +2032,7 @@ class TradingExecutor:
                 amount=amount,
                 ref_price=float(current_price or 0.0),
                 market_type=market_type,
+                market_category=market_category,
                 leverage=leverage,
                 execution_mode=execution_mode,
                 notification_config=notification_config,
@@ -2049,16 +2069,28 @@ class TradingExecutor:
                     )
                 elif sig.startswith("reduce_"):
                     # Partial scale-out: reduce position size, keep entry price unchanged.
-                    self._record_trade(
-                        strategy_id=strategy_id, symbol=symbol, type=signal_type,
-                        price=current_price, amount=amount, value=amount*current_price
-                    )
+                    # 信号模式下计算部分平仓盈亏
                     side = 'short' if 'short' in signal_type else 'long'
                     old_pos = next((p for p in current_positions if p.get('side') == side), None)
                     if not old_pos:
                         return True
                     old_size = float(old_pos.get('size') or 0.0)
                     old_entry = float(old_pos.get('entry_price') or 0.0)
+                    
+                    # 计算减仓部分的盈亏（信号模式下，不含手续费）
+                    reduce_profit = None
+                    if old_entry > 0 and amount > 0:
+                        if side == 'long':
+                            reduce_profit = (current_price - old_entry) * amount
+                        else:
+                            reduce_profit = (old_entry - current_price) * amount
+                    
+                    self._record_trade(
+                        strategy_id=strategy_id, symbol=symbol, type=signal_type,
+                        price=current_price, amount=amount, value=amount*current_price,
+                        profit=reduce_profit
+                    )
+                    
                     new_size = max(0.0, old_size - float(amount or 0.0))
                     if new_size <= old_size * 0.001:
                         self._close_position(strategy_id, symbol, side)
@@ -2068,11 +2100,25 @@ class TradingExecutor:
                             size=new_size, entry_price=old_entry, current_price=current_price
                         )
                 elif 'close' in sig:
+                    # 信号模式下计算平仓盈亏
+                    side = 'short' if 'short' in signal_type else 'long'
+                    old_pos = next((p for p in current_positions if p.get('side') == side), None)
+                    
+                    # 计算盈亏（信号模式下，不含手续费）
+                    close_profit = None
+                    if old_pos:
+                        entry_price = float(old_pos.get('entry_price') or 0)
+                        if entry_price > 0 and amount > 0:
+                            if side == 'long':
+                                close_profit = (current_price - entry_price) * amount
+                            else:
+                                close_profit = (entry_price - current_price) * amount
+                    
                     self._record_trade(
                         strategy_id=strategy_id, symbol=symbol, type=signal_type,
-                        price=current_price, amount=amount, value=amount*current_price
+                        price=current_price, amount=amount, value=amount*current_price,
+                        profit=close_profit
                     )
-                    side = 'short' if 'short' in signal_type else 'long'
                     self._close_position(strategy_id, symbol, side)
 
                 return True
@@ -2145,25 +2191,29 @@ class TradingExecutor:
         language = str(language or "zh-CN")
 
         try:
-            # Lazy import to avoid circular deps + heavy init unless the filter is enabled and entry signal happens.
-            from app.services.analysis import AnalysisService
+            # 使用新的 FastAnalysisService (单次LLM调用，更快更稳定)
+            from app.services.fast_analysis import get_fast_analysis_service
 
-            service = AnalysisService()
+            service = get_fast_analysis_service()
             result = service.analyze(market, symbol, language, model=model)
 
             if isinstance(result, dict) and result.get("error"):
                 return False, {"ai_decision": "", "reason": "analysis_error", "analysis_error": str(result.get("error") or "")}
 
-            ai_dec = self._extract_ai_trade_decision(result)
-            if not ai_dec:
-                return False, {"ai_decision": "", "reason": "missing_ai_decision"}
+            # FastAnalysisService 直接返回 decision 字段
+            ai_dec = str(result.get("decision", "")).strip().upper()
+            if not ai_dec or ai_dec not in ("BUY", "SELL", "HOLD"):
+                return False, {"ai_decision": ai_dec, "reason": "missing_ai_decision"}
 
             expected = "BUY" if signal_type == "open_long" else "SELL"
+            confidence = result.get("confidence", 50)
+            summary = result.get("summary", "")
+            
             if ai_dec == expected:
-                return True, {"ai_decision": ai_dec, "reason": "match"}
+                return True, {"ai_decision": ai_dec, "reason": "match", "confidence": confidence, "summary": summary}
             if ai_dec == "HOLD":
-                return False, {"ai_decision": ai_dec, "reason": "ai_hold"}
-            return False, {"ai_decision": ai_dec, "reason": "direction_mismatch"}
+                return False, {"ai_decision": ai_dec, "reason": "ai_hold", "confidence": confidence, "summary": summary}
+            return False, {"ai_decision": ai_dec, "reason": "direction_mismatch", "confidence": confidence, "summary": summary}
         except Exception as e:
             return False, {"ai_decision": "", "reason": "analysis_exception", "analysis_error": str(e)}
 
@@ -2262,6 +2312,7 @@ class TradingExecutor:
         amount: float,
         ref_price: Optional[float] = None,
         market_type: str = 'swap',
+        market_category: str = 'Crypto',
         leverage: float = 1.0,
         margin_mode: str = 'cross',
         stop_loss_price: float = None,
@@ -2291,7 +2342,7 @@ class TradingExecutor:
         try:
             # Reference price at enqueue time: use current tick price if provided to avoid extra fetch.
             if ref_price is None:
-                ref_price = self._fetch_current_price(None, symbol) or 0.0
+                ref_price = self._fetch_current_price(None, symbol, market_category=market_category) or 0.0
             ref_price = float(ref_price or 0.0)
 
             extra_payload = {

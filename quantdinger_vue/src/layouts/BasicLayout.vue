@@ -117,6 +117,10 @@
         <div class="footer-section copyright">
           {{ menuFooterConfig.copyright }}
         </div>
+        <!-- 版本号 -->
+        <div class="footer-section version">
+          V2.1.1
+        </div>
       </div>
     </div>
   </div>
@@ -842,6 +846,14 @@ export default {
           border-top: 1px solid rgba(255, 255, 255, 0.1);
           opacity: 0.6;
           font-size: 10px;
+        }
+
+        &.version {
+          margin-top: 4px;
+          font-size: 9px;
+          opacity: 0.4;
+          text-align: center;
+          letter-spacing: 1px;
         }
       }
     }

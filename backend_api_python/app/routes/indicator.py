@@ -199,29 +199,76 @@ def save_indicator():
 
         now = _now_ts()  # For BIGINT fields (createtime, updatetime)
 
+        # 检查用户是否是管理员（管理员发布的指标自动通过审核）
+        user_role = getattr(g, 'user_role', 'user')
+        is_admin = user_role == 'admin'
+        
         with get_db_connection() as db:
             cur = db.cursor()
             if indicator_id and indicator_id > 0:
-                cur.execute(
-                    """
-                    UPDATE qd_indicator_codes
-                    SET name = ?, code = ?, description = ?,
-                        publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
-                        updatetime = ?, updated_at = NOW()
-                    WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
-                    """,
-                    (name, code, description, publish_to_community, pricing_type, price, preview_image, now, indicator_id, user_id),
-                )
+                # 检查是否从未发布改为发布，需要设置审核状态
+                if publish_to_community:
+                    cur.execute(
+                        "SELECT publish_to_community, review_status FROM qd_indicator_codes WHERE id = ? AND user_id = ?",
+                        (indicator_id, user_id)
+                    )
+                    existing = cur.fetchone()
+                    was_published = existing and existing.get('publish_to_community')
+                    # 如果之前未发布，现在发布，设置审核状态
+                    # 管理员发布的直接通过，普通用户需要待审核
+                    new_review_status = 'approved' if is_admin else 'pending'
+                    if not was_published:
+                        cur.execute(
+                            """
+                            UPDATE qd_indicator_codes
+                            SET name = ?, code = ?, description = ?,
+                                publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
+                                review_status = ?, review_note = '', reviewed_at = NOW(), reviewed_by = ?,
+                                updatetime = ?, updated_at = NOW()
+                            WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
+                            """,
+                            (name, code, description, publish_to_community, pricing_type, price, preview_image, 
+                             new_review_status, user_id if is_admin else None, now, indicator_id, user_id),
+                        )
+                    else:
+                        # 已发布过的更新，保持原审核状态
+                        cur.execute(
+                            """
+                            UPDATE qd_indicator_codes
+                            SET name = ?, code = ?, description = ?,
+                                publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
+                                updatetime = ?, updated_at = NOW()
+                            WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
+                            """,
+                            (name, code, description, publish_to_community, pricing_type, price, preview_image, now, indicator_id, user_id),
+                        )
+                else:
+                    # 取消发布，清除审核状态
+                    cur.execute(
+                        """
+                        UPDATE qd_indicator_codes
+                        SET name = ?, code = ?, description = ?,
+                            publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
+                            review_status = NULL, review_note = '', reviewed_at = NULL, reviewed_by = NULL,
+                            updatetime = ?, updated_at = NOW()
+                        WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
+                        """,
+                        (name, code, description, publish_to_community, pricing_type, price, preview_image, now, indicator_id, user_id),
+                    )
             else:
+                # 新建指标 - 管理员发布的直接通过，普通用户需要待审核
+                review_status = None
+                if publish_to_community:
+                    review_status = 'approved' if is_admin else 'pending'
                 cur.execute(
                     """
                     INSERT INTO qd_indicator_codes
                       (user_id, is_buy, end_time, name, code, description,
-                       publish_to_community, pricing_type, price, preview_image,
+                       publish_to_community, pricing_type, price, preview_image, review_status,
                        createtime, updatetime, created_at, updated_at)
-                    VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                     """,
-                    (user_id, name, code, description, publish_to_community, pricing_type, price, preview_image, now, now),
+                    (user_id, name, code, description, publish_to_community, pricing_type, price, preview_image, review_status, now, now),
                 )
                 indicator_id = int(cur.lastrowid or 0)
             db.commit()

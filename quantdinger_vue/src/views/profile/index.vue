@@ -962,7 +962,10 @@ export default {
         vip_grant: 'gold',
         vip_revoke: 'default',
         register_bonus: 'cyan',
-        referral_bonus: 'purple'
+        referral_bonus: 'purple',
+        // 指标社区相关
+        indicator_purchase: 'volcano',
+        indicator_sale: 'lime'
       }
       return colors[action] || 'default'
     },
@@ -976,7 +979,10 @@ export default {
         vip_grant: this.$t('profile.creditsLog.actionVipGrant') || 'VIP授予',
         vip_revoke: this.$t('profile.creditsLog.actionVipRevoke') || 'VIP取消',
         register_bonus: this.$t('profile.creditsLog.actionRegisterBonus') || '注册奖励',
-        referral_bonus: this.$t('profile.creditsLog.actionReferralBonus') || '邀请奖励'
+        referral_bonus: this.$t('profile.creditsLog.actionReferralBonus') || '邀请奖励',
+        // 指标社区相关
+        indicator_purchase: this.$t('profile.creditsLog.actionIndicatorPurchase') || '购买指标',
+        indicator_sale: this.$t('profile.creditsLog.actionIndicatorSale') || '出售指标'
       }
       return labels[action] || action
     },

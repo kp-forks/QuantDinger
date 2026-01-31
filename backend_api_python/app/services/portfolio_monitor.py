@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
-from app.services.analysis import AnalysisService
+from app.services.fast_analysis import get_fast_analysis_service
 from app.services.signal_notifier import SignalNotifier
 from app.services.kline import KlineService
 
@@ -156,14 +156,17 @@ def _get_positions_for_monitor(position_ids: List[int] = None, user_id: int = No
 
 def _run_ai_analysis(positions: List[Dict[str, Any]], config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Run full multi-agent AI analysis on positions.
-    Uses the same 13-agent analysis flow as the AI Analysis page.
+    Run fast AI analysis on positions.
+    Uses the new FastAnalysisService (single LLM call, faster and more stable).
     """
     try:
         language = config.get('language', 'en-US')
         custom_prompt = config.get('prompt', '')
         
-        # Analyze each position using the full agent analysis flow
+        # Get the fast analysis service
+        service = get_fast_analysis_service()
+        
+        # Analyze each position
         position_analyses = []
         
         for pos in positions:
@@ -176,21 +179,24 @@ def _run_ai_analysis(positions: List[Dict[str, Any]], config: Dict[str, Any]) ->
                 continue
             
             try:
-                logger.info(f"Running multi-agent analysis for {market}:{symbol}")
+                logger.info(f"Running fast AI analysis for {market}:{symbol}")
                 
-                # Use the full AnalysisService (13-agent flow)
-                analysis_result = AnalysisService().analyze(
+                # Use the new FastAnalysisService (single LLM call)
+                analysis_result = service.analyze(
                     market=market,
                     symbol=symbol,
                     language=language,
                     timeframe='1D'
                 )
                 
-                # Extract key information from the analysis
-                final_decision = analysis_result.get('final_decision', {})
-                trader_decision = analysis_result.get('trader_decision', {})
-                overview = analysis_result.get('overview', {})
-                risk_report = analysis_result.get('risk', {})
+                # Extract information from the new format
+                detailed = analysis_result.get('detailed_analysis', {})
+                trading_plan = analysis_result.get('trading_plan', {})
+                scores = analysis_result.get('scores', {})
+                
+                # Build risk report from risks list
+                risks = analysis_result.get('risks', [])
+                risk_report = '\n'.join([f"• {r}" for r in risks]) if risks else ''
                 
                 position_analysis = {
                     'market': market,
@@ -198,24 +204,35 @@ def _run_ai_analysis(positions: List[Dict[str, Any]], config: Dict[str, Any]) ->
                     'name': name,
                     'group_name': group_name,
                     'entry_price': pos.get('entry_price'),
-                    'current_price': pos.get('current_price'),
+                    'current_price': pos.get('current_price') or analysis_result.get('market_data', {}).get('current_price'),
                     'pnl': pos.get('pnl'),
                     'pnl_percent': pos.get('pnl_percent'),
                     'quantity': pos.get('quantity'),
                     'side': pos.get('side'),
-                    # Multi-agent analysis results
-                    'final_decision': final_decision.get('decision', 'HOLD'),
-                    'confidence': final_decision.get('confidence', 50),
-                    'reasoning': final_decision.get('reasoning', ''),
-                    'trader_decision': trader_decision.get('decision', 'HOLD'),
-                    'trader_reasoning': trader_decision.get('reasoning', ''),
-                    'overview_report': overview.get('report', ''),
-                    'risk_report': risk_report.get('report', ''),
+                    # New fast analysis results
+                    'final_decision': analysis_result.get('decision', 'HOLD'),
+                    'confidence': analysis_result.get('confidence', 50),
+                    'reasoning': analysis_result.get('summary', ''),
+                    'trader_decision': analysis_result.get('decision', 'HOLD'),  # Same as final for fast analysis
+                    'trader_reasoning': analysis_result.get('summary', ''),
+                    'overview_report': detailed.get('technical', ''),
+                    'fundamental_report': detailed.get('fundamental', ''),
+                    'sentiment_report': detailed.get('sentiment', ''),
+                    'risk_report': risk_report,
+                    # Trading plan
+                    'suggested_entry': trading_plan.get('entry_price'),
+                    'suggested_stop_loss': trading_plan.get('stop_loss'),
+                    'suggested_take_profit': trading_plan.get('take_profit'),
+                    # Scores
+                    'technical_score': scores.get('technical', 50),
+                    'fundamental_score': scores.get('fundamental', 50),
+                    'sentiment_score': scores.get('sentiment', 50),
+                    'key_reasons': analysis_result.get('reasons', []),
                     'error': analysis_result.get('error')
                 }
                 
                 position_analyses.append(position_analysis)
-                logger.info(f"Analysis completed for {market}:{symbol}: {final_decision.get('decision', 'N/A')}")
+                logger.info(f"Fast analysis completed for {market}:{symbol}: {analysis_result.get('decision', 'N/A')}")
                 
             except Exception as e:
                 logger.error(f"Failed to analyze {market}:{symbol}: {e}")
@@ -283,7 +300,7 @@ def _build_html_report(
     # Text translations
     texts = {
         'title': '投资组合AI分析报告' if is_zh else 'Portfolio AI Analysis Report',
-        'subtitle': '由 QuantDinger 多智能体分析系统生成' if is_zh else 'Generated by QuantDinger Multi-Agent Analysis System',
+        'subtitle': '由 QuantDinger AI 快速分析引擎生成' if is_zh else 'Generated by QuantDinger Fast AI Analysis Engine',
         'overview': '组合概览' if is_zh else 'Portfolio Overview',
         'positions': '持仓数量' if is_zh else 'Positions',
         'total_value': '总市值' if is_zh else 'Total Value',

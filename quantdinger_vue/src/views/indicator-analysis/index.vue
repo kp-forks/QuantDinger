@@ -202,6 +202,14 @@
                                 @click.stop="handleOpenBacktestHistory(indicator)"
                               />
                             </a-tooltip>
+                            <!-- 发布到社区 -->
+                            <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
+                              <a-icon
+                                :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'"
+                                :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]"
+                                @click.stop="handlePublishIndicator(indicator)"
+                              />
+                            </a-tooltip>
                           </div>
                         </div>
                         <span class="card-desc">{{ indicator.description || '' }}</span>
@@ -215,9 +223,66 @@
                   </div>
                 </div>
 
+                <!-- 我购买的指标 -->
+                <div class="indicator-section" :class="{ 'section-empty': purchasedIndicators.length === 0 }">
+                  <div class="section-label">
+                    <div class="section-label-left" @click="purchasedSectionCollapsed = !purchasedSectionCollapsed">
+                      <a-icon :type="purchasedSectionCollapsed ? 'right' : 'down'" class="collapse-icon" />
+                      <span>{{ $t('dashboard.indicator.section.purchased') }} ({{ purchasedIndicators.length }})</span>
+                    </div>
+                  </div>
+                  <div v-show="!purchasedSectionCollapsed" class="section-content custom-scrollbar">
+                    <div
+                      v-for="indicator in purchasedIndicators"
+                      :key="'purchased-' + indicator.id"
+                      :class="['indicator-card', 'purchased-indicator', { 'indicator-active': isIndicatorActive('purchased-' + indicator.id) }]"
+                      @click="toggleIndicator(indicator, 'purchased')"
+                    >
+                      <div class="card-content">
+                        <div class="card-header">
+                          <span class="card-name">
+                            <a-icon type="shopping" class="purchased-icon" />
+                            {{ indicator.name }}
+                          </span>
+                          <div class="card-actions">
+                            <!-- 购买的指标：只能启动/停止和回测，不能编辑删除 -->
+                            <a-tooltip :title="isIndicatorActive('purchased-' + indicator.id) ? $t('dashboard.indicator.action.stop') : $t('dashboard.indicator.action.start')">
+                              <a-icon
+                                :type="isIndicatorActive('purchased-' + indicator.id) ? 'pause-circle' : 'play-circle'"
+                                :class="['action-icon', 'toggle-icon', { active: isIndicatorActive('purchased-' + indicator.id) }]"
+                                @click.stop="toggleIndicator(indicator, 'purchased')"
+                              />
+                            </a-tooltip>
+                            <a-tooltip :title="$t('dashboard.indicator.backtest.title')">
+                              <a-icon
+                                type="experiment"
+                                class="action-icon backtest-icon"
+                                @click.stop="handleOpenBacktest(indicator)"
+                              />
+                            </a-tooltip>
+                            <a-tooltip :title="$t('dashboard.indicator.backtest.historyTitle')">
+                              <a-icon
+                                type="clock-circle"
+                                class="action-icon backtest-history-icon"
+                                @click.stop="handleOpenBacktestHistory(indicator)"
+                              />
+                            </a-tooltip>
+                          </div>
+                        </div>
+                        <span class="card-desc">{{ indicator.description || '' }}</span>
+                      </div>
+                    </div>
+                    <!-- 空状态 -->
+                    <div v-if="purchasedIndicators.length === 0" class="empty-indicators">
+                      <a-icon type="shopping" />
+                      <span>{{ $t('dashboard.indicator.emptyPurchased') }}</span>
+                    </div>
+                  </div>
+                </div>
+
               </template>
 
-              <!-- 手机端：仅显示“我创建的指标” -->
+              <!-- 手机端：显示指标列表 -->
               <template v-else>
                 <div class="mobile-tab-content">
                   <div class="section-content custom-scrollbar">
@@ -269,6 +334,14 @@
                                 type="clock-circle"
                                 class="action-icon backtest-history-icon"
                                 @click.stop="handleOpenBacktestHistory(indicator)"
+                              />
+                            </a-tooltip>
+                            <!-- 发布到社区 -->
+                            <a-tooltip :title="indicator.publish_to_community ? $t('dashboard.indicator.action.unpublish') : $t('dashboard.indicator.action.publish')">
+                              <a-icon
+                                :type="indicator.publish_to_community ? 'cloud' : 'cloud-upload'"
+                                :class="['action-icon', 'publish-icon', { published: indicator.publish_to_community }]"
+                                @click.stop="handlePublishIndicator(indicator)"
                               />
                             </a-tooltip>
                           </div>
@@ -331,6 +404,61 @@
         :run="selectedBacktestRun"
         @cancel="showBacktestRunViewer = false; selectedBacktestRun = null"
       />
+
+      <!-- 发布到社区弹窗 -->
+      <a-modal
+        :title="publishIndicator && publishIndicator.publish_to_community ? $t('dashboard.indicator.publish.editTitle') : $t('dashboard.indicator.publish.title')"
+        :visible="showPublishModal"
+        @ok="handleConfirmPublish"
+        @cancel="showPublishModal = false; publishIndicator = null"
+        :confirmLoading="publishing"
+        width="500px"
+        :okText="publishIndicator && publishIndicator.publish_to_community ? $t('dashboard.indicator.publish.update') : $t('dashboard.indicator.publish.confirm')"
+        :cancelText="$t('common.cancel')"
+      >
+        <a-form-model ref="publishForm" :model="publishForm" :rules="publishRules" layout="vertical">
+          <a-alert
+            type="info"
+            show-icon
+            :message="$t('dashboard.indicator.publish.hint')"
+            style="margin-bottom: 16px;"
+          />
+          <a-form-model-item :label="$t('dashboard.indicator.publish.pricingType')" prop="pricingType">
+            <a-radio-group v-model="publishPricingType">
+              <a-radio value="free">{{ $t('dashboard.indicator.publish.free') }}</a-radio>
+              <a-radio value="paid">{{ $t('dashboard.indicator.publish.paid') }}</a-radio>
+            </a-radio-group>
+          </a-form-model-item>
+          <a-form-model-item
+            v-if="publishPricingType === 'paid'"
+            :label="$t('dashboard.indicator.publish.price')"
+            prop="price"
+          >
+            <a-input-number
+              v-model="publishPrice"
+              :min="1"
+              :max="10000"
+              :precision="0"
+              style="width: 200px;"
+            />
+            <span style="margin-left: 8px;">{{ $t('community.credits') }}</span>
+          </a-form-model-item>
+          <a-form-model-item :label="$t('dashboard.indicator.publish.description')" prop="description">
+            <a-textarea
+              v-model="publishDescription"
+              :placeholder="$t('dashboard.indicator.publish.descriptionPlaceholder')"
+              :rows="4"
+              :maxLength="500"
+            />
+          </a-form-model-item>
+          <div v-if="publishIndicator && publishIndicator.publish_to_community" style="margin-top: 16px;">
+            <a-button type="danger" ghost @click="handleUnpublish" :loading="unpublishing">
+              <a-icon type="close-circle" />
+              {{ $t('dashboard.indicator.publish.unpublish') }}
+            </a-button>
+          </div>
+        </a-form-model>
+      </a-modal>
 
       <!-- 添加股票弹窗 -->
       <a-modal
@@ -552,12 +680,14 @@ export default {
       { id: 'ema30', name: 'EMA30 (30日指数均线)', shortName: 'EMA30', type: 'line', defaultParams: { length: 30 } }
     ]
 
-    // 从数据库获取的指标（仅保留“我创建的指标”）
+    // 从数据库获取的指标
     const customIndicators = ref([]) // 我创建的指标（is_buy=0）
+    const purchasedIndicators = ref([]) // 我购买的指标（is_buy=1）
     const loadingIndicators = ref(false)
 
     // 折叠状态
     const customSectionCollapsed = ref(false) // 我创建的指标区域是否折叠
+    const purchasedSectionCollapsed = ref(false) // 我购买的指标区域是否折叠
 
     // 指标编辑器相关
     const showIndicatorEditor = ref(false)
@@ -572,6 +702,21 @@ export default {
     const backtestHistoryIndicator = ref(null)
     const showBacktestRunViewer = ref(false)
     const selectedBacktestRun = ref(null)
+
+    // 发布到社区相关
+    const showPublishModal = ref(false)
+    const publishIndicator = ref(null)
+    const publishing = ref(false)
+    const unpublishing = ref(false)
+    // 使用独立的 ref 变量，确保 v-model 正常工作
+    const publishPricingType = ref('free')
+    const publishPrice = ref(10)
+    const publishDescription = ref('')
+    const publishRules = {
+      price: [
+        { required: true, message: '请输入价格', trigger: 'blur', type: 'number' }
+      ]
+    }
 
     // 实时更新设置
     const realtimeEnabled = ref(false) // 是否启用实时更新
@@ -1090,13 +1235,21 @@ export default {
         })
 
         if (res.code === 1 && res.data) {
-          // 仅保留我创建的指标（过滤掉 is_buy=1）
-          const customItems = res.data.filter(item => item.is_buy === 0 || item.is_buy === '0' || item.is_buy === undefined || item.is_buy === null)
+          // 我创建的指标（is_buy=0 或未设置）
+          const customItems = res.data.filter(item => !item.is_buy || item.is_buy === 0 || item.is_buy === '0')
+          // 我购买的指标（is_buy=1）
+          const purchasedItems = res.data.filter(item => item.is_buy === 1 || item.is_buy === '1')
 
           customIndicators.value = customItems.map(item => ({
             ...item,
-            type: 'python', // 标识为Python代码指标
+            type: 'python',
             source: 'custom'
+          }))
+
+          purchasedIndicators.value = purchasedItems.map(item => ({
+            ...item,
+            type: 'python',
+            source: 'purchased'
           }))
         }
       } catch (error) {
@@ -1329,6 +1482,91 @@ export default {
       showBacktestRunViewer.value = true
     }
 
+    // 发布指标到社区
+    const handlePublishIndicator = (indicator) => {
+      publishIndicator.value = { ...indicator }
+      // 设置表单初始值
+      publishPricingType.value = indicator.pricing_type || 'free'
+      publishPrice.value = indicator.price || 10
+      publishDescription.value = indicator.description || ''
+      showPublishModal.value = true
+    }
+
+    // 确认发布
+    const handleConfirmPublish = async () => {
+      if (!userId.value) {
+        message.error(proxy.$t('dashboard.indicator.error.pleaseLogin'))
+        return
+      }
+
+      publishing.value = true
+      try {
+        const res = await request({
+          url: '/api/indicator/saveIndicator',
+          method: 'post',
+          data: {
+            userid: userId.value,
+            id: publishIndicator.value.id,
+            code: publishIndicator.value.code,
+            name: publishIndicator.value.name,
+            description: publishDescription.value,
+            publishToCommunity: true,
+            pricingType: publishPricingType.value,
+            price: publishPricingType.value === 'paid' ? publishPrice.value : 0
+          }
+        })
+
+        if (res.code === 1) {
+          message.success(proxy.$t('dashboard.indicator.publish.success'))
+          showPublishModal.value = false
+          publishIndicator.value = null
+          await loadIndicators()
+        } else {
+          message.error(res.msg || proxy.$t('dashboard.indicator.publish.failed'))
+        }
+      } catch (error) {
+        message.error(proxy.$t('dashboard.indicator.publish.failed') + ': ' + (error.message || ''))
+      } finally {
+        publishing.value = false
+      }
+    }
+
+    // 取消发布
+    const handleUnpublish = async () => {
+      if (!userId.value || !publishIndicator.value) return
+
+      unpublishing.value = true
+      try {
+        const res = await request({
+          url: '/api/indicator/saveIndicator',
+          method: 'post',
+          data: {
+            userid: userId.value,
+            id: publishIndicator.value.id,
+            code: publishIndicator.value.code,
+            name: publishIndicator.value.name,
+            description: publishIndicator.value.description,
+            publishToCommunity: false,
+            pricingType: 'free',
+            price: 0
+          }
+        })
+
+        if (res.code === 1) {
+          message.success(proxy.$t('dashboard.indicator.publish.unpublishSuccess'))
+          showPublishModal.value = false
+          publishIndicator.value = null
+          await loadIndicators()
+        } else {
+          message.error(res.msg || proxy.$t('dashboard.indicator.publish.unpublishFailed'))
+        }
+      } catch (error) {
+        message.error(proxy.$t('dashboard.indicator.publish.unpublishFailed'))
+      } finally {
+        unpublishing.value = false
+      }
+    }
+
     // 保存指标到数据库
     const handleSaveIndicator = async (data) => {
       if (!userId.value) {
@@ -1556,6 +1794,7 @@ loadingWatchlist,
       trendIndicators,
       oscillatorIndicators,
       customIndicators,
+      purchasedIndicators,
       loadingIndicators,
       realtimeEnabled,
 toggleRealtime,
@@ -1588,6 +1827,7 @@ getMarketColor,
       handleDeleteIndicator,
       toggleCustomSection,
       customSectionCollapsed,
+      purchasedSectionCollapsed,
       handlePriceChange,
       handleChartRetry,
       handleIndicatorToggle,
@@ -1602,6 +1842,18 @@ getMarketColor,
       showBacktestRunViewer,
       selectedBacktestRun,
       handleViewBacktestRun,
+      // 发布到社区相关
+      showPublishModal,
+      publishIndicator,
+      publishing,
+      unpublishing,
+      publishPricingType,
+      publishPrice,
+      publishDescription,
+      publishRules,
+      handlePublishIndicator,
+      handleConfirmPublish,
+      handleUnpublish,
       // 暴露给回测弹窗使用的选中值
       selectedSymbol: currentSymbol,
       selectedMarket: currentMarket,
@@ -2110,6 +2362,19 @@ getMarketColor,
     color: #13c2c2;
     &:hover {
       color: #08979c;
+    }
+  }
+
+  &.publish-icon {
+    color: #1890ff;
+    &:hover {
+      color: #40a9ff;
+    }
+    &.published {
+      color: #52c41a;
+      &:hover {
+        color: #73d13d;
+      }
     }
   }
 
@@ -2736,6 +3001,19 @@ getMarketColor,
             color: #5cdbd3;
             &:hover {
               color: #87e8de;
+            }
+          }
+
+          &.publish-icon {
+            color: #1890ff;
+            &:hover {
+              color: #40a9ff;
+            }
+            &.published {
+              color: #52c41a;
+              &:hover {
+                color: #73d13d;
+              }
             }
           }
 

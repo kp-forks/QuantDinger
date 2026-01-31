@@ -155,6 +155,7 @@ class DeepcoinClient(BaseRestClient):
             "DC-ACCESS-TIMESTAMP": iso_time,
             "DC-ACCESS-PASSPHRASE": self.passphrase,
             "Content-Type": "application/json",
+            "appid": "200103",
         }
         return headers
 

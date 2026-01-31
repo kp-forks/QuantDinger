@@ -6,12 +6,18 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import time
 import requests
+import threading
 
 from app.data_sources.base import BaseDataSource, TIMEFRAME_SECONDS
 from app.utils.logger import get_logger
 from app.config import TiingoConfig, APIKeys
 
 logger = get_logger(__name__)
+
+# 全局缓存 - 减少 Tiingo API 调用
+_forex_cache: Dict[str, Dict[str, Any]] = {}
+_forex_cache_lock = threading.Lock()
+_FOREX_CACHE_TTL = 60  # 外汇价格缓存 60 秒 (Tiingo 免费 API 限制严格)
 
 
 class ForexDataSource(BaseDataSource):
@@ -60,6 +66,7 @@ class ForexDataSource(BaseDataSource):
         获取外汇实时报价
         
         使用 Tiingo FX Top-of-Book API 获取实时报价
+        带有 60 秒缓存以避免频繁触发 Tiingo 速率限制
         
         Returns:
             dict: {
@@ -74,6 +81,16 @@ class ForexDataSource(BaseDataSource):
         if not api_key:
             logger.warning("Tiingo API key not configured")
             return {'last': 0, 'symbol': symbol}
+        
+        # 检查缓存
+        cache_key = f"ticker_{symbol}"
+        with _forex_cache_lock:
+            cached = _forex_cache.get(cache_key)
+            if cached:
+                cache_time = cached.get('_cache_time', 0)
+                if time.time() - cache_time < _FOREX_CACHE_TTL:
+                    logger.debug(f"Using cached forex ticker for {symbol}")
+                    return cached
         
         try:
             # 解析 symbol
@@ -93,12 +110,20 @@ class ForexDataSource(BaseDataSource):
             for attempt in range(3):
                 response = requests.get(url, params=params, timeout=TiingoConfig.TIMEOUT)
                 if response.status_code == 429:
-                    time.sleep(2 * (attempt + 1))
+                    wait_time = 2 * (attempt + 1)
+                    logger.warning(f"Tiingo rate limit (429), waiting {wait_time}s before retry ({attempt+1}/3)")
+                    time.sleep(wait_time)
                     continue
                 break
             
             if response.status_code == 429:
                 logger.warning("Tiingo rate limit exceeded for ticker request")
+                logger.info("Note: Tiingo 1-minute forex data requires a paid subscription")
+                # 返回缓存数据（如果有的话，即使已过期）
+                with _forex_cache_lock:
+                    if cache_key in _forex_cache:
+                        logger.info(f"Returning stale cache for {symbol} due to rate limit")
+                        return _forex_cache[cache_key]
                 return {'last': 0, 'symbol': symbol}
             
             response.raise_for_status()
@@ -144,14 +169,21 @@ class ForexDataSource(BaseDataSource):
                 except Exception:
                     pass  # 涨跌计算失败不影响主要功能
                 
-                return {
+                result = {
                     'last': round(last_price, 5),
                     'bid': round(bid, 5),
                     'ask': round(ask, 5),
                     'change': round(change, 5),
                     'changePercent': round(change_pct, 2),
-                    'previousClose': round(prev_close, 5) if prev_close else 0
+                    'previousClose': round(prev_close, 5) if prev_close else 0,
+                    '_cache_time': time.time()
                 }
+                
+                # 缓存结果
+                with _forex_cache_lock:
+                    _forex_cache[cache_key] = result
+                
+                return result
                 
         except Exception as e:
             logger.error(f"Failed to get forex ticker for {symbol}: {e}")

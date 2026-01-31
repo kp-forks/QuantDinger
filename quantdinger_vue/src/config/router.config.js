@@ -16,13 +16,6 @@ export const asyncRouterMap = [
         component: () => import('@/views/dashboard'),
         meta: { title: 'menu.dashboard', keepAlive: true, icon: 'dashboard', permission: ['dashboard'] }
       },
-      // 全球金融面板
-      {
-        path: '/global-market',
-        name: 'GlobalMarket',
-        component: () => import('@/views/global-market'),
-        meta: { title: 'menu.dashboard.globalMarket', keepAlive: true, icon: 'global', permission: ['dashboard'] }
-      },
       // AI 分析
       {
         path: '/ai-analysis/:pageNo([1-9]\\d*)?',
@@ -36,6 +29,13 @@ export const asyncRouterMap = [
         name: 'Indicator',
         component: () => import('@/views/indicator-analysis'),
         meta: { title: 'menu.dashboard.indicator', keepAlive: true, icon: 'line-chart', permission: ['dashboard'] }
+      },
+      // 指标市场（放在指标分析下面）
+      {
+        path: '/indicator-community',
+        name: 'IndicatorCommunity',
+        component: () => import('@/views/indicator-community'),
+        meta: { title: 'menu.dashboard.community', keepAlive: false, icon: 'shop', permission: ['dashboard'] }
       },
       // 交易助手
       {
@@ -51,13 +51,6 @@ export const asyncRouterMap = [
         component: () => import('@/views/portfolio'),
         meta: { title: 'menu.dashboard.portfolio', keepAlive: true, icon: 'fund', permission: ['dashboard'] }
       },
-      // 系统设置 (admin only)
-      {
-        path: '/settings',
-        name: 'Settings',
-        component: () => import('@/views/settings'),
-        meta: { title: 'menu.settings', keepAlive: false, icon: 'setting', permission: ['admin'] }
-      },
       // 用户管理 (admin only)
       {
         path: '/user-manage',
@@ -72,12 +65,12 @@ export const asyncRouterMap = [
         component: () => import('@/views/profile'),
         meta: { title: 'menu.myProfile', keepAlive: false, icon: 'user', permission: ['dashboard'] }
       },
-      // 官方社区（keepAlive disabled intentionally for iframe page）
+      // 系统设置 (admin only) - 放在最后
       {
-        path: '/indicator-community',
-        name: 'IndicatorCommunity',
-        component: () => import('@/views/indicator-community'),
-        meta: { title: 'menu.dashboard.community', keepAlive: false, icon: 'shop', permission: ['dashboard'] }
+        path: '/settings',
+        name: 'Settings',
+        component: () => import('@/views/settings'),
+        meta: { title: 'menu.settings', keepAlive: false, icon: 'setting', permission: ['admin'] }
       }
 
       // other

@@ -40,6 +40,15 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _format_datetime(dt: Any) -> Any:
+    """Convert datetime object to ISO format string for JSON serialization."""
+    if dt is None:
+        return None
+    if hasattr(dt, 'isoformat'):
+        return dt.isoformat()
+    return dt
+
+
 def _safe_json_loads(value: Any, default: Any) -> Any:
     if value is None:
         return default
@@ -596,6 +605,12 @@ def pending_orders():
                     "exchange_display": exchange_display,
                     "notify_channels": notify_channels,
                     "market_type": market_type or (r.get("market_type") or ""),
+                    # Format datetime fields for JSON serialization
+                    "created_at": _format_datetime(r.get("created_at")),
+                    "updated_at": _format_datetime(r.get("updated_at")),
+                    "executed_at": _format_datetime(r.get("executed_at")),
+                    "processed_at": _format_datetime(r.get("processed_at")),
+                    "sent_at": _format_datetime(r.get("sent_at")),
                 }
             )
 

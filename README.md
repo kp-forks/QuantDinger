@@ -180,14 +180,16 @@ QuantDinger includes a built-in **LLM-based multi-agent research system** that g
       - **Forex**: Via MetaTrader 5 (MT5) 🆕
     - **Signal Notification**: For markets without live trading support (A-shares/Futures), send signals via Telegram, Discord, Email, SMS, or Webhook.
 
-### 3. AI Multi-Agent Research
-*Your 24/7 AI Investment Committee.*
+### 3. AI-Powered Analysis
+*Fast, Accurate, Professional Reports.*
 
-The system employs a multi-agent team to act as a secondary filter for your strategies:
+QuantDinger features a streamlined AI analysis system:
 
-- **Research Agents**: Scrape web news and macro events (Google/Bing).
-- **Analysis Agents**: Analyze technical indicators and capital flows.
-- **Strategic Integration**: The AI judgment can serve as a "Market Filter"—only allowing your strategy to trade when the AI sentiment aligns (e.g., "Don't buy if AI Risk Analyst flags high macro danger").
+- **Fast Analysis Mode**: Single LLM call architecture for quick, accurate analysis (replaces complex multi-agent system)
+- **Global Market Integration**: Real-time market data, heatmaps, and economic calendar integrated into the analysis page
+- **ATR-Based Trading Levels**: Stop-loss and take-profit recommendations based on technical analysis (ATR, Support/Resistance)
+- **Analysis Memory**: Store analysis results for history review and continuous learning
+- **Strategic Integration**: AI analysis can serve as a "Market Filter" for your strategies
 
 ### 4. Universal Data Engine
 
@@ -310,7 +312,15 @@ QuantDinger supports multiple AI providers with auto-detection:
 
 Simply configure your preferred provider's API key in `.env`. The system auto-detects available providers.
 
-### 8. User Management & Security
+### 8. Indicator Community
+*Share, Discover, and Trade Indicators.*
+
+- **Publish & Share**: Share your Python indicators with the community
+- **Purchase System**: Buy premium indicators from other users
+- **Rating & Reviews**: Rate and review purchased indicators
+- **Admin Review**: Moderation system for quality control
+
+### 9. User Management & Security
 
 - **Multi-User Support**: PostgreSQL-backed user accounts with role-based permissions
 - **OAuth Login**: Google and GitHub OAuth integration
@@ -318,11 +328,12 @@ Simply configure your preferred provider's API key in `.env`. The system auto-de
 - **Security Features**: Cloudflare Turnstile captcha, IP/account rate limiting
 - **Demo Mode**: Read-only mode for public demonstrations
 
-### 9. Tech Stack
+### 10. Tech Stack
 
 - **Backend**: Python (Flask) + PostgreSQL + Redis (optional)
 - **Frontend**: Vue 2 + Ant Design Vue + KlineCharts/ECharts
 - **Deployment**: Docker Compose (with PostgreSQL)
+- **Current Version**: V2.1.1 ([Changelog](docs/CHANGELOG.md))
 
 ---
 

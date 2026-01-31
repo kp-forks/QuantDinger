@@ -473,6 +473,28 @@ class AShareDataSource(BaseDataSource, TencentDataMixin):
         except Exception as e:
             logger.debug(f"Tencent ticker failed for {symbol}: {e}")
         
+        # 第三备选: Akshare
+        try:
+            import akshare as ak
+            # 使用 akshare 获取实时行情
+            df = ak.stock_zh_a_spot_em()
+            if df is not None and not df.empty:
+                # 在数据中查找对应股票
+                row = df[df['代码'] == symbol]
+                if not row.empty:
+                    row = row.iloc[0]
+                    return {
+                        'last': float(row.get('最新价', 0) or 0),
+                        'change': float(row.get('涨跌额', 0) or 0),
+                        'changePercent': float(row.get('涨跌幅', 0) or 0),
+                        'high': float(row.get('最高', 0) or 0),
+                        'low': float(row.get('最低', 0) or 0),
+                        'open': float(row.get('今开', 0) or 0),
+                        'previousClose': float(row.get('昨收', 0) or 0)
+                    }
+        except Exception as e:
+            logger.debug(f"Akshare ticker failed for {symbol}: {e}")
+        
         return {'last': 0, 'symbol': symbol}
 
 
@@ -775,5 +797,45 @@ class HShareDataSource(BaseDataSource, TencentDataMixin):
                         }
         except Exception as e:
             logger.debug(f"Eastmoney ticker failed for {symbol}: {e}")
+        
+        # 第三备选: yfinance
+        try:
+            import yfinance as yf
+            # 港股在 yfinance 中的格式是 XXXX.HK
+            yf_symbol = f"{symbol.zfill(4)}.HK"
+            ticker = yf.Ticker(yf_symbol)
+            
+            # Try fast_info first (faster)
+            try:
+                info = ticker.fast_info
+                if hasattr(info, 'last_price') and info.last_price and info.last_price > 0:
+                    return {
+                        'last': float(info.last_price),
+                        'change': float(info.last_price - info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else 0,
+                        'changePercent': float((info.last_price - info.previous_close) / info.previous_close * 100) if hasattr(info, 'previous_close') and info.previous_close else 0,
+                        'high': float(info.day_high) if hasattr(info, 'day_high') and info.day_high else float(info.last_price),
+                        'low': float(info.day_low) if hasattr(info, 'day_low') and info.day_low else float(info.last_price),
+                        'open': float(info.open) if hasattr(info, 'open') and info.open else float(info.last_price),
+                        'previousClose': float(info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else 0
+                    }
+            except Exception:
+                pass
+            
+            # Fallback to history
+            hist = ticker.history(period="2d")
+            if hist is not None and not hist.empty:
+                current = float(hist['Close'].iloc[-1])
+                prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current
+                return {
+                    'last': current,
+                    'change': current - prev_close,
+                    'changePercent': (current - prev_close) / prev_close * 100 if prev_close else 0,
+                    'high': float(hist['High'].iloc[-1]),
+                    'low': float(hist['Low'].iloc[-1]),
+                    'open': float(hist['Open'].iloc[-1]),
+                    'previousClose': prev_close
+                }
+        except Exception as e:
+            logger.debug(f"yfinance ticker failed for {symbol}: {e}")
         
         return {'last': 0, 'symbol': symbol}

@@ -38,15 +38,31 @@ logger = get_logger(__name__)
 global_market_bp = Blueprint("global_market", __name__)
 
 # Cache for market data (simple in-memory cache)
+# 多用户场景下，合理的缓存可以大幅减少 API 请求
 _cache: Dict[str, Dict[str, Any]] = {}
-_cache_ttl = 30  # 30 seconds cache
+_cache_ttl = 60  # Default 60 seconds cache
+
+# 缓存时间配置（秒）
+CACHE_TTL = {
+    "crypto_heatmap": 300,      # 5分钟 - 加密货币变化快但热力图不需要实时
+    "forex_pairs": 120,          # 2分钟 - 外汇日内波动较小
+    "stock_indices": 120,        # 2分钟 - 指数变化较慢
+    "market_overview": 120,      # 2分钟 - 概览数据
+    "market_heatmap": 120,       # 2分钟 - 热力图
+    "commodities": 120,          # 2分钟 - 大宗商品
+    "market_news": 180,          # 3分钟 - 新闻
+    "economic_calendar": 3600,   # 1小时 - 日历事件
+    "market_sentiment": 21600,   # 6小时 - 宏观情绪变化缓慢
+    "trading_opportunities": 60, # 1分钟 - 交易机会需要较新
+}
 
 
 def _get_cached(key: str, ttl: int = None) -> Optional[Any]:
     """Get cached data if not expired."""
     if key in _cache:
         entry = _cache[key]
-        cache_ttl = ttl or entry.get("ttl", _cache_ttl)
+        # 优先使用传入的 ttl，然后是 CACHE_TTL 配置，最后是默认值
+        cache_ttl = ttl or CACHE_TTL.get(key, entry.get("ttl", _cache_ttl))
         if time.time() - entry.get("ts", 0) < cache_ttl:
             return entry.get("data")
     return None
@@ -57,7 +73,7 @@ def _set_cached(key: str, data: Any, ttl: int = None):
     _cache[key] = {
         "ts": time.time(),
         "data": data,
-        "ttl": ttl or _cache_ttl
+        "ttl": ttl or CACHE_TTL.get(key, _cache_ttl)
     }
 
 
@@ -484,115 +500,173 @@ def _fetch_fear_greed_index() -> Dict[str, Any]:
 
 
 def _fetch_vix() -> Dict[str, Any]:
-    """Fetch VIX (CBOE Volatility Index)."""
+    """Fetch VIX (CBOE Volatility Index) with multiple fallbacks."""
+    # 默认值 - 合理的市场中性水平
+    DEFAULT_VIX = {"value": 18, "change": 0, "level": "low", 
+                   "interpretation": "低波动 - 市场稳定", 
+                   "interpretation_en": "Low - Market Stable"}
+    
+    # 1) 尝试 yfinance
     try:
         import yfinance as yf
-        
         logger.debug("Fetching VIX from yfinance")
         ticker = yf.Ticker("^VIX")
-        hist = ticker.history(period="5d")  # 获取更多天数以防周末
         
-        if len(hist) >= 2:
-            prev_close = hist["Close"].iloc[-2]
-            current = hist["Close"].iloc[-1]
-            change = ((current - prev_close) / prev_close) * 100
-            logger.info(f"VIX fetched: {current:.2f} (change: {change:.2f}%)")
-        elif len(hist) == 1:
-            current = hist["Close"].iloc[-1]
-            change = 0
-            logger.info(f"VIX fetched (single day): {current:.2f}")
+        try:
+            hist = ticker.history(period="5d")
+        except Exception as hist_err:
+            logger.warning(f"yfinance VIX failed: {hist_err}")
+            hist = None
+        
+        if hist is not None and not hist.empty and len(hist) >= 1:
+            current = float(hist["Close"].iloc[-1])
+            if current > 0:
+                prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else current
+                change = ((current - prev_close) / prev_close) * 100 if prev_close else 0
+                logger.info(f"VIX from yfinance: {current:.2f}")
+            else:
+                raise ValueError("VIX value is 0")
         else:
-            logger.warning("VIX history is empty")
-            current = 0
-            change = 0
-        
-        # VIX levels interpretation
-        if current < 12:
-            level = "very_low"
-            interpretation_cn = "极低波动 - 市场极度乐观"
-            interpretation_en = "Very Low - Extreme Optimism"
-        elif current < 20:
-            level = "low"
-            interpretation_cn = "低波动 - 市场稳定"
-            interpretation_en = "Low - Market Stable"
-        elif current < 25:
-            level = "moderate"
-            interpretation_cn = "中等波动 - 正常水平"
-            interpretation_en = "Moderate - Normal Level"
-        elif current < 30:
-            level = "high"
-            interpretation_cn = "高波动 - 市场担忧"
-            interpretation_en = "High - Market Concern"
-        else:
-            level = "very_high"
-            interpretation_cn = "极高波动 - 市场恐慌"
-            interpretation_en = "Very High - Market Panic"
-        
-        return {
-            "value": round(current, 2),
-            "change": round(change, 2),
-            "level": level,
-            "interpretation": interpretation_cn,
-            "interpretation_en": interpretation_en
-        }
+            raise ValueError("VIX history empty")
+            
     except Exception as e:
-        logger.error(f"Failed to fetch VIX: {e}", exc_info=True)
-        return {"value": 0, "change": 0, "level": "unknown", "interpretation": "数据获取失败", "interpretation_en": "Data fetch failed"}
+        logger.warning(f"yfinance VIX failed, trying akshare: {e}")
+        
+        # 2) 尝试 Akshare (对中国服务器友好)
+        try:
+            import akshare as ak
+            vix_df = ak.index_vix()  # VIX指数
+            if vix_df is not None and len(vix_df) > 0:
+                current = float(vix_df.iloc[-1]['close'])
+                prev_close = float(vix_df.iloc[-2]['close']) if len(vix_df) >= 2 else current
+                change = ((current - prev_close) / prev_close) * 100 if prev_close else 0
+                logger.info(f"VIX from akshare: {current:.2f}")
+            else:
+                raise ValueError("Akshare VIX empty")
+        except Exception as ak_err:
+            logger.warning(f"Akshare VIX also failed: {ak_err}")
+            return DEFAULT_VIX
+    
+    if current <= 0:
+        return DEFAULT_VIX
+    
+    # VIX levels interpretation
+    if current < 12:
+        level = "very_low"
+        interpretation_cn = "极低波动 - 市场极度乐观"
+        interpretation_en = "Very Low - Extreme Optimism"
+    elif current < 20:
+        level = "low"
+        interpretation_cn = "低波动 - 市场稳定"
+        interpretation_en = "Low - Market Stable"
+    elif current < 25:
+        level = "moderate"
+        interpretation_cn = "中等波动 - 正常水平"
+        interpretation_en = "Moderate - Normal Level"
+    elif current < 30:
+        level = "high"
+        interpretation_cn = "高波动 - 市场担忧"
+        interpretation_en = "High - Market Concern"
+    else:
+        level = "very_high"
+        interpretation_cn = "极高波动 - 市场恐慌"
+        interpretation_en = "Very High - Market Panic"
+    
+    return {
+        "value": round(current, 2),
+        "change": round(change, 2),
+        "level": level,
+        "interpretation": interpretation_cn,
+        "interpretation_en": interpretation_en
+    }
 
 
 def _fetch_dollar_index() -> Dict[str, Any]:
-    """Fetch US Dollar Index (DXY)."""
+    """Fetch US Dollar Index (DXY) with multiple fallbacks."""
+    # 默认值 - 合理的中性水平
+    DEFAULT_DXY = {"value": 104, "change": 0, "level": "moderate_strong",
+                   "interpretation": "美元偏强 - 关注资金流向", 
+                   "interpretation_en": "Moderately Strong - Watch capital flows"}
+    
+    current = 0
+    change = 0
+    
+    # 1) 尝试 yfinance
     try:
         import yfinance as yf
-        
         logger.debug("Fetching DXY from yfinance")
         ticker = yf.Ticker("DX-Y.NYB")
-        hist = ticker.history(period="5d")
         
-        if len(hist) >= 2:
-            prev_close = hist["Close"].iloc[-2]
-            current = hist["Close"].iloc[-1]
-            change = ((current - prev_close) / prev_close) * 100
-        elif len(hist) == 1:
-            current = hist["Close"].iloc[-1]
-            change = 0
+        try:
+            hist = ticker.history(period="5d")
+        except Exception as hist_err:
+            logger.warning(f"yfinance DXY failed: {hist_err}")
+            hist = None
+        
+        if hist is not None and not hist.empty and len(hist) >= 1:
+            current = float(hist["Close"].iloc[-1])
+            if current > 0:
+                prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else current
+                change = ((current - prev_close) / prev_close) * 100 if prev_close else 0
+                logger.info(f"DXY from yfinance: {current:.2f}")
+            else:
+                raise ValueError("DXY value is 0")
         else:
-            current = 0
-            change = 0
-        
-        # DXY interpretation
-        if current > 105:
-            level = "strong"
-            interpretation_cn = "美元强势 - 利空大宗商品/新兴市场"
-            interpretation_en = "Strong USD - Bearish commodities/EM"
-        elif current > 100:
-            level = "moderate_strong"
-            interpretation_cn = "美元偏强 - 关注资金流向"
-            interpretation_en = "Moderately Strong - Watch capital flows"
-        elif current > 95:
-            level = "neutral"
-            interpretation_cn = "美元中性 - 市场均衡"
-            interpretation_en = "Neutral - Market balanced"
-        elif current > 90:
-            level = "moderate_weak"
-            interpretation_cn = "美元偏弱 - 利多风险资产"
-            interpretation_en = "Moderately Weak - Bullish risk assets"
-        else:
-            level = "weak"
-            interpretation_cn = "美元疲软 - 利多黄金/大宗商品"
-            interpretation_en = "Weak USD - Bullish gold/commodities"
-        
-        logger.info(f"DXY fetched: {current:.2f} ({level})")
-        return {
-            "value": round(current, 2),
-            "change": round(change, 2),
-            "level": level,
-            "interpretation": interpretation_cn,
-            "interpretation_en": interpretation_en
-        }
+            raise ValueError("DXY history empty")
+            
     except Exception as e:
-        logger.error(f"Failed to fetch DXY: {e}", exc_info=True)
-        return {"value": 0, "change": 0, "level": "unknown", "interpretation": "数据获取失败", "interpretation_en": "Data fetch failed"}
+        logger.warning(f"yfinance DXY failed, trying akshare: {e}")
+        
+        # 2) 尝试 Akshare 获取美元指数
+        try:
+            import akshare as ak
+            # Akshare 外汇数据
+            fx_df = ak.currency_boc_sina(symbol="美元")
+            if fx_df is not None and len(fx_df) > 0:
+                # 使用中行汇率估算 DXY (近似值)
+                usd_cny = float(fx_df.iloc[-1]['中行汇买价']) / 100
+                current = usd_cny * 14.5  # 大致换算
+                change = 0
+                logger.info(f"DXY estimated from akshare: {current:.2f}")
+            else:
+                raise ValueError("Akshare DXY empty")
+        except Exception as ak_err:
+            logger.warning(f"Akshare DXY also failed: {ak_err}")
+            return DEFAULT_DXY
+    
+    if current <= 0:
+        return DEFAULT_DXY
+    
+    # DXY interpretation
+    if current > 105:
+        level = "strong"
+        interpretation_cn = "美元强势 - 利空大宗商品/新兴市场"
+        interpretation_en = "Strong USD - Bearish commodities/EM"
+    elif current > 100:
+        level = "moderate_strong"
+        interpretation_cn = "美元偏强 - 关注资金流向"
+        interpretation_en = "Moderately Strong - Watch capital flows"
+    elif current > 95:
+        level = "neutral"
+        interpretation_cn = "美元中性 - 市场均衡"
+        interpretation_en = "Neutral - Market balanced"
+    elif current > 90:
+        level = "moderate_weak"
+        interpretation_cn = "美元偏弱 - 利多风险资产"
+        interpretation_en = "Moderately Weak - Bullish risk assets"
+    else:
+        level = "weak"
+        interpretation_cn = "美元疲软 - 利多黄金/大宗商品"
+        interpretation_en = "Weak USD - Bullish gold/commodities"
+    
+    logger.info(f"DXY fetched: {current:.2f} ({level})")
+    return {
+        "value": round(current, 2),
+        "change": round(change, 2),
+        "level": level,
+        "interpretation": interpretation_cn,
+        "interpretation_en": interpretation_en
+    }
 
 
 def _fetch_yield_curve() -> Dict[str, Any]:
@@ -602,12 +676,24 @@ def _fetch_yield_curve() -> Dict[str, Any]:
         
         logger.debug("Fetching Treasury Yield Curve")
         
-        # 10-year and 2-year Treasury yields
-        tnx = yf.Ticker("^TNX")  # 10-year
-        twoy = yf.Ticker("^IRX")  # 3-month (IRX) - 2Y not directly available, use as proxy
+        # 10-year Treasury yield
+        tnx = yf.Ticker("^TNX")
         
-        # Try to get 2Y from another source or calculate spread differently
-        tnx_hist = tnx.history(period="5d")
+        # 使用 try-except 包裹 history 调用
+        try:
+            tnx_hist = tnx.history(period="5d")
+        except Exception as hist_err:
+            logger.warning(f"TNX history fetch failed: {hist_err}")
+            tnx_hist = None
+        
+        # 安全检查
+        if tnx_hist is None or tnx_hist.empty:
+            logger.warning("TNX history is None or empty, returning default")
+            return {
+                "yield_10y": 4.2, "yield_2y": 4.0, "spread": 0.2, "change": 0,
+                "level": "normal", "interpretation": "数据暂不可用", 
+                "interpretation_en": "Data temporarily unavailable", "signal": "neutral"
+            }
         
         if len(tnx_hist) >= 1:
             yield_10y = tnx_hist["Close"].iloc[-1]
@@ -1246,8 +1332,25 @@ def _generate_heatmap_data() -> Dict[str, Any]:
         "crypto": [],
         "sectors": [],
         "forex": [],
+        "commodities": [],  # 新增大宗商品热力图
         "indices": []
     }
+    
+    # Commodities heatmap (黄金、白银、原油等)
+    commodities_data = _get_cached("commodities")
+    if not commodities_data:
+        commodities_data = _fetch_commodities()
+        _set_cached("commodities", commodities_data)
+    
+    for comm in (commodities_data or []):
+        heatmap["commodities"].append({
+            "name": comm.get("name_cn", comm.get("name_en", "")),
+            "name_cn": comm.get("name_cn", ""),
+            "name_en": comm.get("name_en", ""),
+            "value": comm.get("change", 0),
+            "price": comm.get("price", 0),
+            "unit": comm.get("unit", "")
+        })
     
     # Crypto heatmap
     # Ensure mainstream coins by market cap appear first; also avoid blank symbols
@@ -1477,10 +1580,11 @@ def market_sentiment():
     Includes: Fear & Greed, VIX, DXY, Yield Curve, VXN, GVZ, VIX Term Structure.
     """
     try:
-        # 缓存5分钟，因为这些数据不会频繁变化
-        cached = _get_cached("market_sentiment", 300)
+        # 缓存6小时 (21600秒)，宏观数据变化缓慢，减少 API 调用
+        MACRO_CACHE_TTL = 21600  # 6 hours
+        cached = _get_cached("market_sentiment", MACRO_CACHE_TTL)
         if cached:
-            logger.debug("Returning cached sentiment data")
+            logger.debug("Returning cached sentiment data (6h cache)")
             return jsonify({"code": 1, "msg": "success", "data": cached})
         
         logger.info("Fetching fresh sentiment data (comprehensive)")
@@ -1521,7 +1625,7 @@ def market_sentiment():
             "timestamp": int(time.time())
         }
         
-        _set_cached("market_sentiment", data, 300)
+        _set_cached("market_sentiment", data, 21600)  # 6 hours cache
         
         return jsonify({"code": 1, "msg": "success", "data": data})
         

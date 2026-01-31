@@ -1,0 +1,252 @@
+# QuantDinger Changelog
+
+This document records version updates, new features, bug fixes, and database migration instructions.
+
+---
+
+## V2.1.1 (2026-01-31)
+
+### 🚀 New Features
+
+#### AI Analysis System Overhaul
+- **Fast Analysis Mode**: Replaced the complex multi-agent system with a streamlined single LLM call architecture for faster and more accurate analysis
+- **Progressive Loading**: Market data now loads independently - each section (sentiment, indices, heatmap, calendar) displays as soon as it's ready
+- **Professional Loading Animation**: New progress bar with step indicators during AI analysis
+- **Analysis Memory**: Store analysis results for history review and user feedback
+- **Stop Loss/Take Profit Calculation**: Now based on ATR (Average True Range) and Support/Resistance levels with clear methodology hints
+
+#### Global Market Integration
+- Integrated Global Market data directly into AI Analysis page
+- Real-time scrolling display of major global indices with flags, prices, and percentage changes
+- Interactive heatmaps for Crypto, Commodities, Sectors, and Forex
+- Economic calendar with bullish/bearish/neutral impact indicators
+- Commodities heatmap added (Gold, Silver, Crude Oil, etc.)
+
+#### Indicator Community Enhancements
+- **Admin Review System**: Administrators can now review, approve, reject, unpublish, and delete community indicators
+- **Purchase & Rating System**: Users can buy indicators, leave ratings and comments
+- **Statistics Tracking**: Purchase count, average rating, rating count, view count for each indicator
+
+#### Trading Assistant Improvements
+- Improved IBKR/MT5 connection test feedback
+- Added local deployment warning for external trading platforms
+- Virtual profit/loss calculation for signal-only strategies
+
+### 🐛 Bug Fixes
+- Fixed progress bar and timer not animating during AI analysis
+- Fixed missing i18n translations for various components
+- Fixed Tiingo API rate limit issues with caching
+- Fixed A-share and H-share data fetching with multiple fallback sources
+- Fixed watchlist price batch fetch timeout handling
+- Fixed heatmap multi-language support for commodities and forex
+
+### 🎨 UI/UX Improvements
+- Reorganized left menu: Indicator Market moved below Indicator Analysis, Settings moved to bottom
+- Skeleton loading animations for progressive data display
+- Dark theme support for all new components
+- Compact market overview bar design
+
+### 📋 Database Migration
+
+**Run the following SQL on your PostgreSQL database before deploying V2.1.1:**
+
+```sql
+-- ============================================================
+-- QuantDinger V2.1.1 Database Migration
+-- ============================================================
+
+-- 1. AI Analysis Memory Table
+CREATE TABLE IF NOT EXISTS qd_analysis_memory (
+    id SERIAL PRIMARY KEY,
+    market VARCHAR(50) NOT NULL,
+    symbol VARCHAR(50) NOT NULL,
+    decision VARCHAR(10) NOT NULL,
+    confidence INT DEFAULT 50,
+    price_at_analysis DECIMAL(24, 8),
+    entry_price DECIMAL(24, 8),
+    stop_loss DECIMAL(24, 8),
+    take_profit DECIMAL(24, 8),
+    summary TEXT,
+    reasons JSONB,
+    risks JSONB,
+    scores JSONB,
+    indicators_snapshot JSONB,
+    raw_result JSONB,
+    created_at TIMESTAMP DEFAULT NOW(),
+    validated_at TIMESTAMP,
+    actual_outcome VARCHAR(20),
+    actual_return_pct DECIMAL(10, 4),
+    was_correct BOOLEAN,
+    user_feedback VARCHAR(20),
+    feedback_at TIMESTAMP
+);
+
+-- Add raw_result column if table exists but column doesn't
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_analysis_memory' AND column_name = 'raw_result'
+    ) THEN
+        ALTER TABLE qd_analysis_memory ADD COLUMN raw_result JSONB;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_symbol ON qd_analysis_memory(market, symbol);
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_created ON qd_analysis_memory(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_validated ON qd_analysis_memory(validated_at) WHERE validated_at IS NOT NULL;
+
+-- 2. Indicator Purchase Records
+CREATE TABLE IF NOT EXISTS qd_indicator_purchases (
+    id SERIAL PRIMARY KEY,
+    indicator_id INTEGER NOT NULL REFERENCES qd_indicator_codes(id) ON DELETE CASCADE,
+    buyer_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    seller_id INTEGER NOT NULL REFERENCES qd_users(id),
+    price DECIMAL(10,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(indicator_id, buyer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchases_indicator ON qd_indicator_purchases(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_buyer ON qd_indicator_purchases(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_seller ON qd_indicator_purchases(seller_id);
+
+-- 3. Indicator Comments
+CREATE TABLE IF NOT EXISTS qd_indicator_comments (
+    id SERIAL PRIMARY KEY,
+    indicator_id INTEGER NOT NULL REFERENCES qd_indicator_codes(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    rating INTEGER DEFAULT 5 CHECK (rating >= 1 AND rating <= 5),
+    content TEXT DEFAULT '',
+    parent_id INTEGER REFERENCES qd_indicator_comments(id) ON DELETE CASCADE,
+    is_deleted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_indicator ON qd_indicator_comments(indicator_id);
+CREATE INDEX IF NOT EXISTS idx_comments_user ON qd_indicator_comments(user_id);
+
+-- 4. Indicator Codes Extensions
+DO $$
+BEGIN
+    -- Purchase count
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'purchase_count'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN purchase_count INTEGER DEFAULT 0;
+    END IF;
+    
+    -- Average rating
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'avg_rating'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN avg_rating DECIMAL(3,2) DEFAULT 0;
+    END IF;
+    
+    -- Rating count
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'rating_count'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN rating_count INTEGER DEFAULT 0;
+    END IF;
+    
+    -- View count
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'view_count'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN view_count INTEGER DEFAULT 0;
+    END IF;
+    
+    -- Review status
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'review_status'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN review_status VARCHAR(20) DEFAULT 'approved';
+        UPDATE qd_indicator_codes SET review_status = 'approved' WHERE publish_to_community = 1;
+    END IF;
+    
+    -- Review note
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'review_note'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN review_note TEXT DEFAULT '';
+    END IF;
+    
+    -- Reviewed at
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'reviewed_at'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN reviewed_at TIMESTAMP;
+    END IF;
+    
+    -- Reviewed by
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'reviewed_by'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN reviewed_by INTEGER;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_indicator_review_status ON qd_indicator_codes(review_status);
+
+-- 5. User Table Extensions
+DO $$
+BEGIN
+    -- Token version (for single-client login)
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_users' AND column_name = 'token_version'
+    ) THEN
+        ALTER TABLE qd_users ADD COLUMN token_version INTEGER DEFAULT 1;
+    END IF;
+    
+    -- Notification settings
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'qd_users' AND column_name = 'notification_settings'
+    ) THEN
+        ALTER TABLE qd_users ADD COLUMN notification_settings TEXT DEFAULT '{}';
+    END IF;
+END $$;
+
+-- Migration Complete
+DO $$
+BEGIN
+    RAISE NOTICE '✅ QuantDinger V2.1.1 database migration completed!';
+END $$;
+```
+
+### 🗑️ Removed
+- Old multi-agent AI analysis system (`backend_api_python/app/services/agents/` directory)
+- Old analysis routes and services
+- Standalone Global Market page (merged into AI Analysis)
+- Reflection worker background process
+
+### ⚠️ Breaking Changes
+- AI Analysis API endpoints changed from `/api/analysis/*` to `/api/fast-analysis/*`
+- Old analysis history data is not compatible with new format
+
+### 📝 Configuration Notes
+- No new environment variables required
+- Existing LLM configuration in System Settings will be used for AI Analysis
+
+---
+
+## Version History
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| V2.1.1 | 2026-01-31 | AI Analysis overhaul, Global Market integration, Indicator Community enhancements |
+
+---
+
+*For questions or issues, please open a GitHub issue or contact the maintainers.*
