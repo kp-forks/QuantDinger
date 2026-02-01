@@ -919,6 +919,8 @@
                   <a-checkbox value="email">{{ $t('trading-assistant.notify.email') }}</a-checkbox>
                   <a-checkbox value="telegram">{{ $t('trading-assistant.notify.telegram') }}</a-checkbox>
                   <a-checkbox value="discord">{{ $t('trading-assistant.notify.discord') }}</a-checkbox>
+                  <a-checkbox value="webhook">{{ $t('trading-assistant.notify.webhook') }}</a-checkbox>
+                  <a-checkbox value="phone">{{ $t('trading-assistant.notify.phone') }}</a-checkbox>
                 </a-checkbox-group>
                 <div class="form-item-hint">{{ $t('trading-assistant.form.notifyChannelsHint') }}</div>
               </a-form-item>
