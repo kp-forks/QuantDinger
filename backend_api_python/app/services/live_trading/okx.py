@@ -52,16 +52,41 @@ class OkxClient(BaseRestClient):
         self._lev_cache_ttl_sec = 60.0
 
     @staticmethod
-    def _dec_str(d: Decimal, max_decimals: int = 18) -> str:
+    def _dec_str(d: Decimal, max_decimals: int = 18, strict_precision: Optional[int] = None) -> str:
         """
         Convert Decimal to a non-scientific string with controlled precision.
         OKX expects plain decimal strings matching lotSz precision.
+        
+        Args:
+            d: Decimal value to format
+            max_decimals: Maximum decimal places (fallback if strict_precision not provided)
+            strict_precision: If provided, strictly limit to this many decimal places
         """
         try:
             if d == 0:
                 return "0"
             # Normalize to remove unnecessary trailing zeros
             normalized = d.normalize()
+            
+            # If strict_precision is provided, use it and strictly limit decimal places
+            if strict_precision is not None:
+                try:
+                    prec = int(strict_precision)
+                    if prec < 0:
+                        prec = 0
+                    if prec > 18:
+                        prec = 18
+                    # Use quantize to ensure exact precision
+                    from decimal import ROUND_DOWN
+                    q = Decimal("1").scaleb(-prec)
+                    quantized = normalized.quantize(q, rounding=ROUND_DOWN)
+                    s = format(quantized, f".{prec}f")
+                    if '.' in s:
+                        s = s.rstrip('0').rstrip('.')
+                    return s if s else "0"
+                except Exception:
+                    pass
+            
             # Format with max_decimals and remove trailing zeros
             s = format(normalized, f".{max_decimals}f")
             if '.' in s:
@@ -72,6 +97,16 @@ class OkxClient(BaseRestClient):
                 f = float(d)
                 if f == 0:
                     return "0"
+                if strict_precision is not None:
+                    try:
+                        prec = int(strict_precision)
+                        if 0 <= prec <= 18:
+                            s = format(f, f".{prec}f")
+                            if '.' in s:
+                                s = s.rstrip('0').rstrip('.')
+                            return s if s else "0"
+                    except Exception:
+                        pass
                 s = format(f, f".{max_decimals}f")
                 if '.' in s:
                     s = s.rstrip('0').rstrip('.')
@@ -81,6 +116,16 @@ class OkxClient(BaseRestClient):
                 if 'e' in s.lower() or 'E' in s:
                     try:
                         f = float(s)
+                        if strict_precision is not None:
+                            try:
+                                prec = int(strict_precision)
+                                if 0 <= prec <= 18:
+                                    s = format(f, f".{prec}f")
+                                    if '.' in s:
+                                        s = s.rstrip('0').rstrip('.')
+                                    return s if s else "0"
+                            except Exception:
+                                pass
                         s = format(f, f".{max_decimals}f")
                         if '.' in s:
                             s = s.rstrip('0').rstrip('.')
@@ -146,19 +191,22 @@ class OkxClient(BaseRestClient):
             self._inst_cache[key] = (now, first)
         return first if isinstance(first, dict) else {}
 
-    def _normalize_order_size(self, *, inst_id: str, market_type: str, size: float) -> Decimal:
+    def _normalize_order_size(self, *, inst_id: str, market_type: str, size: float) -> Tuple[Decimal, Optional[int]]:
         """
         Normalize requested size to OKX constraints:
         - Spot: size is base currency quantity; align to lotSz/minSz.
         - Swap: OKX sz is in contracts; convert base qty -> contracts using ctVal, then align to lotSz/minSz.
 
         Note: this system passes `amount` around as base-asset quantity across exchanges.
+        
+        Returns:
+            Tuple of (normalized_size, precision) where precision is the number of decimal places required.
         """
         mt = (market_type or "swap").strip().lower()
         iid = str(inst_id or "").strip()
         req = self._to_dec(size)
         if req <= 0:
-            return Decimal("0")
+            return (Decimal("0"), None)
 
         inst_type = "SPOT" if mt == "spot" else "SWAP"
         inst: Dict[str, Any] = {}
@@ -180,11 +228,29 @@ class OkxClient(BaseRestClient):
         # Align to lot size step.
         if lot_sz > 0:
             req = self._floor_to_step(req, lot_sz)
+        
+        # Infer precision from lotSz
+        size_precision = None
+        if lot_sz > 0:
+            try:
+                lot_sz_normalized = lot_sz.normalize()
+                lot_sz_str = str(lot_sz_normalized)
+                if '.' in lot_sz_str:
+                    decimal_part = lot_sz_str.split('.')[1]
+                    size_precision = len(decimal_part)
+                    if size_precision < 0:
+                        size_precision = 0
+                    if size_precision > 18:
+                        size_precision = 18
+                else:
+                    size_precision = 0
+            except Exception:
+                pass
 
         # Enforce min size best-effort.
         if min_sz > 0 and req < min_sz:
-            return Decimal("0")
-        return req
+            return (Decimal("0"), size_precision)
+        return (req, size_precision)
 
     def _iso_ts(self) -> str:
         # OKX requires RFC3339 timestamp with milliseconds, e.g. 2020-12-08T09:08:57.715Z
@@ -390,7 +456,7 @@ class OkxClient(BaseRestClient):
         if sd not in ("buy", "sell"):
             raise LiveTradingError(f"Invalid side: {side}")
         sz_raw = float(size or 0.0)
-        sz_dec = self._normalize_order_size(inst_id=inst_id, market_type=mt, size=sz_raw)
+        sz_dec, sz_precision = self._normalize_order_size(inst_id=inst_id, market_type=mt, size=sz_raw)
         if float(sz_dec or 0) <= 0:
             raise LiveTradingError(f"Invalid size (below lot/min size): requested={sz_raw}")
 
@@ -400,7 +466,7 @@ class OkxClient(BaseRestClient):
                 "tdMode": "cash",
                 "side": sd,
                 "ordType": "market",
-                "sz": self._dec_str(sz_dec),
+                "sz": self._dec_str(sz_dec, strict_precision=sz_precision),
                 # Follow hummingbot approach so "sz" is in base currency.
                 "tgtCcy": "base_ccy",
             }
@@ -462,7 +528,7 @@ class OkxClient(BaseRestClient):
 
         if mt == "spot":
             inst_id = to_okx_spot_inst_id(symbol)
-            sz_dec = self._normalize_order_size(inst_id=inst_id, market_type=mt, size=sz_raw)
+            sz_dec, sz_precision = self._normalize_order_size(inst_id=inst_id, market_type=mt, size=sz_raw)
             if float(sz_dec or 0) <= 0:
                 raise LiveTradingError(f"Invalid size (below lot/min size): requested={sz_raw}")
             body: Dict[str, Any] = {
@@ -470,13 +536,13 @@ class OkxClient(BaseRestClient):
                 "tdMode": "cash",
                 "side": sd,
                 "ordType": "limit",
-                "sz": self._dec_str(sz_dec),
+                "sz": self._dec_str(sz_dec, strict_precision=sz_precision),
                 "px": str(px),
             }
         else:
             inst_id = to_okx_swap_inst_id(symbol)
             ps = self._resolve_pos_side(requested_pos_side=pos_side, market_type=mt)
-            sz_dec = self._normalize_order_size(inst_id=inst_id, market_type=mt, size=sz_raw)
+            sz_dec, sz_precision = self._normalize_order_size(inst_id=inst_id, market_type=mt, size=sz_raw)
             if float(sz_dec or 0) <= 0:
                 raise LiveTradingError(f"Invalid size (below lot/min size): requested={sz_raw}")
             td = (td_mode or "cross").lower()
@@ -488,7 +554,7 @@ class OkxClient(BaseRestClient):
                 "side": sd,
                 "posSide": ps,
                 "ordType": "limit",
-                "sz": self._dec_str(sz_dec),
+                "sz": self._dec_str(sz_dec, strict_precision=sz_precision),
                 "px": str(px),
             }
             if reduce_only:

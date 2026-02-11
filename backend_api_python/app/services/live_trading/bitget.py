@@ -54,15 +54,34 @@ class BitgetMixClient(BaseRestClient):
             return Decimal("0")
 
     @staticmethod
-    def _dec_str(d: Decimal, max_decimals: int = 18) -> str:
+    def _dec_str(d: Decimal, max_decimals: int = 18, strict_precision: Optional[int] = None) -> str:
         """
         Convert Decimal to string with controlled precision.
         Bitget requires quantities to match sizeStep/sizePlace precision.
+        
+        Args:
+            d: Decimal value to format
+            max_decimals: Maximum decimal places (fallback if strict_precision not provided)
+            strict_precision: If provided, strictly limit to this many decimal places
         """
         try:
             if d == 0:
                 return "0"
             normalized = d.normalize()
+            
+            if strict_precision is not None:
+                try:
+                    prec = int(strict_precision)
+                    if 0 <= prec <= 18:
+                        q = Decimal("1").scaleb(-prec)
+                        quantized = normalized.quantize(q, rounding=ROUND_DOWN)
+                        s = format(quantized, f".{prec}f")
+                        if '.' in s:
+                            s = s.rstrip('0').rstrip('.')
+                        return s if s else "0"
+                except Exception:
+                    pass
+            
             s = format(normalized, f".{max_decimals}f")
             if '.' in s:
                 s = s.rstrip('0').rstrip('.')
@@ -72,6 +91,16 @@ class BitgetMixClient(BaseRestClient):
                 f = float(d)
                 if f == 0:
                     return "0"
+                if strict_precision is not None:
+                    try:
+                        prec = int(strict_precision)
+                        if 0 <= prec <= 18:
+                            s = format(f, f".{prec}f")
+                            if '.' in s:
+                                s = s.rstrip('0').rstrip('.')
+                            return s if s else "0"
+                    except Exception:
+                        pass
                 s = format(f, f".{max_decimals}f")
                 if '.' in s:
                     s = s.rstrip('0').rstrip('.')
@@ -81,6 +110,16 @@ class BitgetMixClient(BaseRestClient):
                 if 'e' in s.lower() or 'E' in s:
                     try:
                         f = float(s)
+                        if strict_precision is not None:
+                            try:
+                                prec = int(strict_precision)
+                                if 0 <= prec <= 18:
+                                    s = format(f, f".{prec}f")
+                                    if '.' in s:
+                                        s = s.rstrip('0').rstrip('.')
+                                    return s if s else "0"
+                            except Exception:
+                                pass
                         s = format(f, f".{max_decimals}f")
                         if '.' in s:
                             s = s.rstrip('0').rstrip('.')
@@ -219,17 +258,20 @@ class BitgetMixClient(BaseRestClient):
             self._contract_cache[key] = (now, first)
         return first if isinstance(first, dict) else {}
 
-    def _normalize_size(self, *, symbol: str, product_type: str, base_size: float) -> Decimal:
+    def _normalize_size(self, *, symbol: str, product_type: str, base_size: float) -> Tuple[Decimal, Optional[int]]:
         """
         Normalize Bitget mix order size.
 
         This system computes `amount` as base-asset quantity (e.g. BTC amount).
         Bitget mix `size` is typically in contracts; convert using contractSize if available,
         then align to size step / min trade number (best-effort).
+        
+        Returns:
+            Tuple of (normalized_size, precision) where precision is the number of decimal places required.
         """
         req_base = self._to_dec(base_size)
         if req_base <= 0:
-            return Decimal("0")
+            return (Decimal("0"), None)
 
         contract: Dict[str, Any] = {}
         try:
@@ -245,6 +287,7 @@ class BitgetMixClient(BaseRestClient):
 
         # Determine step size.
         step = self._to_dec(contract.get("sizeMultiplier") or contract.get("sizeStep") or contract.get("lotSize") or "0")
+        size_precision = None
         if step <= 0:
             sp = contract.get("sizePlace")
             try:
@@ -253,15 +296,32 @@ class BitgetMixClient(BaseRestClient):
                 places = 0
             if places >= 0 and places <= 18:
                 step = Decimal("1") / (Decimal("10") ** Decimal(str(places)))
+                size_precision = places
 
         if step > 0:
             qty = self._floor_to_step(qty, step)
+            # Infer precision from step if not already set
+            if size_precision is None:
+                try:
+                    step_normalized = step.normalize()
+                    step_str = str(step_normalized)
+                    if '.' in step_str:
+                        decimal_part = step_str.split('.')[1]
+                        size_precision = len(decimal_part)
+                        if size_precision < 0:
+                            size_precision = 0
+                        if size_precision > 18:
+                            size_precision = 18
+                    else:
+                        size_precision = 0
+                except Exception:
+                    pass
 
         # Enforce min trade number if present.
         mn = self._to_dec(contract.get("minTradeNum") or contract.get("minSize") or contract.get("minQty") or "0")
         if mn > 0 and qty < mn:
-            return Decimal("0")
-        return qty
+            return (Decimal("0"), size_precision)
+        return (qty, size_precision)
 
     def ping(self) -> bool:
         code, data, _ = self._request("GET", "/api/v2/public/time")
@@ -354,7 +414,7 @@ class BitgetMixClient(BaseRestClient):
         if sd not in ("buy", "sell"):
             raise LiveTradingError(f"Invalid side: {side}")
         req = float(size or 0.0)
-        sz_dec = self._normalize_size(symbol=symbol, product_type=product_type, base_size=req)
+        sz_dec, sz_precision = self._normalize_size(symbol=symbol, product_type=product_type, base_size=req)
         if float(sz_dec or 0) <= 0:
             raise LiveTradingError(f"Invalid size (below step/min): requested={req}")
 
@@ -365,7 +425,7 @@ class BitgetMixClient(BaseRestClient):
             "marginMode": self._normalize_margin_mode(margin_mode),
             "side": sd,
             "orderType": "market",
-            "size": self._dec_str(sz_dec),
+            "size": self._dec_str(sz_dec, strict_precision=sz_precision),
         }
         if reduce_only:
             body["reduceOnly"] = "YES"
@@ -408,7 +468,7 @@ class BitgetMixClient(BaseRestClient):
         px = float(price or 0.0)
         if req <= 0 or px <= 0:
             raise LiveTradingError("Invalid size/price")
-        sz_dec = self._normalize_size(symbol=symbol, product_type=product_type, base_size=req)
+        sz_dec, sz_precision = self._normalize_size(symbol=symbol, product_type=product_type, base_size=req)
         if float(sz_dec or 0) <= 0:
             raise LiveTradingError(f"Invalid size (below step/min): requested={req}")
 
@@ -420,7 +480,7 @@ class BitgetMixClient(BaseRestClient):
             "side": sd,
             "orderType": "limit",
             "price": str(px),
-            "size": self._dec_str(sz_dec),
+            "size": self._dec_str(sz_dec, strict_precision=sz_precision),
         }
         # Force maker behavior when requested (avoid taker fills).
         if post_only:

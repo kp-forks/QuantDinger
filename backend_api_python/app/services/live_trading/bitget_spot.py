@@ -54,15 +54,34 @@ class BitgetSpotClient(BaseRestClient):
             return Decimal("0")
 
     @staticmethod
-    def _dec_str(d: Decimal, max_decimals: int = 18) -> str:
+    def _dec_str(d: Decimal, max_decimals: int = 18, strict_precision: Optional[int] = None) -> str:
         """
         Convert Decimal to string with controlled precision.
         Bitget requires quantities to match quantityStep/quantityScale precision.
+        
+        Args:
+            d: Decimal value to format
+            max_decimals: Maximum decimal places (fallback if strict_precision not provided)
+            strict_precision: If provided, strictly limit to this many decimal places
         """
         try:
             if d == 0:
                 return "0"
             normalized = d.normalize()
+            
+            if strict_precision is not None:
+                try:
+                    prec = int(strict_precision)
+                    if 0 <= prec <= 18:
+                        q = Decimal("1").scaleb(-prec)
+                        quantized = normalized.quantize(q, rounding=ROUND_DOWN)
+                        s = format(quantized, f".{prec}f")
+                        if '.' in s:
+                            s = s.rstrip('0').rstrip('.')
+                        return s if s else "0"
+                except Exception:
+                    pass
+            
             s = format(normalized, f".{max_decimals}f")
             if '.' in s:
                 s = s.rstrip('0').rstrip('.')
@@ -72,6 +91,16 @@ class BitgetSpotClient(BaseRestClient):
                 f = float(d)
                 if f == 0:
                     return "0"
+                if strict_precision is not None:
+                    try:
+                        prec = int(strict_precision)
+                        if 0 <= prec <= 18:
+                            s = format(f, f".{prec}f")
+                            if '.' in s:
+                                s = s.rstrip('0').rstrip('.')
+                            return s if s else "0"
+                    except Exception:
+                        pass
                 s = format(f, f".{max_decimals}f")
                 if '.' in s:
                     s = s.rstrip('0').rstrip('.')
@@ -81,6 +110,16 @@ class BitgetSpotClient(BaseRestClient):
                 if 'e' in s.lower() or 'E' in s:
                     try:
                         f = float(s)
+                        if strict_precision is not None:
+                            try:
+                                prec = int(strict_precision)
+                                if 0 <= prec <= 18:
+                                    s = format(f, f".{prec}f")
+                                    if '.' in s:
+                                        s = s.rstrip('0').rstrip('.')
+                                    return s if s else "0"
+                            except Exception:
+                                pass
                         s = format(f, f".{max_decimals}f")
                         if '.' in s:
                             s = s.rstrip('0').rstrip('.')
@@ -200,13 +239,16 @@ class BitgetSpotClient(BaseRestClient):
             self._sym_meta_cache[sym] = (now, found)
         return found
 
-    def _normalize_base_size(self, *, symbol: str, base_size: float) -> Decimal:
+    def _normalize_base_size(self, *, symbol: str, base_size: float) -> Tuple[Decimal, Optional[int]]:
         """
         Normalize spot base size to lot/step constraints (best-effort).
+        
+        Returns:
+            Tuple of (normalized_size, precision) where precision is the number of decimal places required.
         """
         req = self._to_dec(base_size)
         if req <= 0:
-            return Decimal("0")
+            return (Decimal("0"), None)
 
         meta: Dict[str, Any] = {}
         try:
@@ -216,6 +258,7 @@ class BitgetSpotClient(BaseRestClient):
 
         # Try common fields. If unavailable, keep as-is.
         step = self._to_dec(meta.get("quantityScale") or meta.get("quantityStep") or meta.get("sizeStep") or meta.get("minTradeIncrement") or "0")
+        size_precision = None
         if step <= 0:
             # Some endpoints expose decimals instead of step.
             qd = meta.get("quantityPrecision") or meta.get("quantityPlace") or meta.get("sizePlace")
@@ -225,14 +268,31 @@ class BitgetSpotClient(BaseRestClient):
                 places = 0
             if places >= 0 and places <= 18:
                 step = Decimal("1") / (Decimal("10") ** Decimal(str(places)))
+                size_precision = places
 
         if step > 0:
             req = self._floor_to_step(req, step)
+            # Infer precision from step if not already set
+            if size_precision is None:
+                try:
+                    step_normalized = step.normalize()
+                    step_str = str(step_normalized)
+                    if '.' in step_str:
+                        decimal_part = step_str.split('.')[1]
+                        size_precision = len(decimal_part)
+                        if size_precision < 0:
+                            size_precision = 0
+                        if size_precision > 18:
+                            size_precision = 18
+                    else:
+                        size_precision = 0
+                except Exception:
+                    pass
 
         mn = self._to_dec(meta.get("minTradeAmount") or meta.get("minTradeNum") or meta.get("minQty") or meta.get("minSize") or "0")
         if mn > 0 and req < mn:
-            return Decimal("0")
-        return req
+            return (Decimal("0"), size_precision)
+        return (req, size_precision)
 
     def place_limit_order(self, *, symbol: str, side: str, size: float, price: float, client_order_id: Optional[str] = None) -> LiveOrderResult:
         sym = to_bitget_um_symbol(symbol)
@@ -243,14 +303,14 @@ class BitgetSpotClient(BaseRestClient):
         px = float(price or 0.0)
         if req <= 0 or px <= 0:
             raise LiveTradingError("Invalid size/price")
-        sz_dec = self._normalize_base_size(symbol=symbol, base_size=req)
+        sz_dec, sz_precision = self._normalize_base_size(symbol=symbol, base_size=req)
         if float(sz_dec or 0) <= 0:
             raise LiveTradingError(f"Invalid size (below step/min): requested={req}")
 
         body: Dict[str, Any] = {
             "side": sd,
             "symbol": sym,
-            "size": self._dec_str(sz_dec),
+            "size": self._dec_str(sz_dec, strict_precision=sz_precision),
             "orderType": "limit",
             "force": "gtc",
             "price": str(px),
@@ -278,10 +338,10 @@ class BitgetSpotClient(BaseRestClient):
         # For Bitget spot market BUY, many APIs interpret size as quote amount.
         # Our worker may pass quote-sized value for BUY; do not quantize it as base size.
         if sd == "sell":
-            sz_dec = self._normalize_base_size(symbol=symbol, base_size=req)
+            sz_dec, sz_precision = self._normalize_base_size(symbol=symbol, base_size=req)
             if float(sz_dec or 0) <= 0:
                 raise LiveTradingError(f"Invalid size (below step/min): requested={req}")
-            sz_str = self._dec_str(sz_dec)
+            sz_str = self._dec_str(sz_dec, strict_precision=sz_precision)
         else:
             sz_str = str(req)
 

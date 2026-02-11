@@ -61,15 +61,34 @@ class BybitClient(BaseRestClient):
             return Decimal("0")
 
     @staticmethod
-    def _dec_str(d: Decimal, max_decimals: int = 18) -> str:
+    def _dec_str(d: Decimal, max_decimals: int = 18, strict_precision: Optional[int] = None) -> str:
         """
         Convert Decimal to string with controlled precision.
         Bybit requires quantities to match qtyStep precision.
+        
+        Args:
+            d: Decimal value to format
+            max_decimals: Maximum decimal places (fallback if strict_precision not provided)
+            strict_precision: If provided, strictly limit to this many decimal places
         """
         try:
             if d == 0:
                 return "0"
             normalized = d.normalize()
+            
+            if strict_precision is not None:
+                try:
+                    prec = int(strict_precision)
+                    if 0 <= prec <= 18:
+                        q = Decimal("1").scaleb(-prec)
+                        quantized = normalized.quantize(q, rounding=ROUND_DOWN)
+                        s = format(quantized, f".{prec}f")
+                        if '.' in s:
+                            s = s.rstrip('0').rstrip('.')
+                        return s if s else "0"
+                except Exception:
+                    pass
+            
             s = format(normalized, f".{max_decimals}f")
             if '.' in s:
                 s = s.rstrip('0').rstrip('.')
@@ -79,6 +98,16 @@ class BybitClient(BaseRestClient):
                 f = float(d)
                 if f == 0:
                     return "0"
+                if strict_precision is not None:
+                    try:
+                        prec = int(strict_precision)
+                        if 0 <= prec <= 18:
+                            s = format(f, f".{prec}f")
+                            if '.' in s:
+                                s = s.rstrip('0').rstrip('.')
+                            return s if s else "0"
+                    except Exception:
+                        pass
                 s = format(f, f".{max_decimals}f")
                 if '.' in s:
                     s = s.rstrip('0').rstrip('.')
@@ -88,6 +117,16 @@ class BybitClient(BaseRestClient):
                 if 'e' in s.lower() or 'E' in s:
                     try:
                         f = float(s)
+                        if strict_precision is not None:
+                            try:
+                                prec = int(strict_precision)
+                                if 0 <= prec <= 18:
+                                    s = format(f, f".{prec}f")
+                                    if '.' in s:
+                                        s = s.rstrip('0').rstrip('.')
+                                    return s if s else "0"
+                            except Exception:
+                                pass
                         s = format(f, f".{max_decimals}f")
                         if '.' in s:
                             s = s.rstrip('0').rstrip('.')
@@ -201,10 +240,10 @@ class BybitClient(BaseRestClient):
             self._inst_cache[key] = (now, first)
         return first if isinstance(first, dict) else {}
 
-    def _normalize_qty(self, *, symbol: str, qty: float) -> Decimal:
+    def _normalize_qty(self, *, symbol: str, qty: float) -> Tuple[Decimal, Optional[int]]:
         q = self._to_dec(qty)
         if q <= 0:
-            return Decimal("0")
+            return (Decimal("0"), None)
         sym = to_bybit_symbol(symbol)
         try:
             info = self.get_instrument_info(category=self.category, symbol=sym) or {}
@@ -215,9 +254,28 @@ class BybitClient(BaseRestClient):
         mn = self._to_dec((lot or {}).get("minOrderQty") or "0")
         if step > 0:
             q = self._floor_to_step(q, step)
+        
+        # Infer precision from qtyStep
+        qty_precision = None
+        if step > 0:
+            try:
+                step_normalized = step.normalize()
+                step_str = str(step_normalized)
+                if '.' in step_str:
+                    decimal_part = step_str.split('.')[1]
+                    qty_precision = len(decimal_part)
+                    if qty_precision < 0:
+                        qty_precision = 0
+                    if qty_precision > 18:
+                        qty_precision = 18
+                else:
+                    qty_precision = 0
+            except Exception:
+                pass
+        
         if mn > 0 and q < mn:
-            return Decimal("0")
-        return q
+            return (Decimal("0"), qty_precision)
+        return (q, qty_precision)
 
     def place_market_order(
         self,
@@ -233,7 +291,7 @@ class BybitClient(BaseRestClient):
         if sd not in ("buy", "sell"):
             raise LiveTradingError(f"Invalid side: {side}")
         q_req = float(qty or 0.0)
-        q_dec = self._normalize_qty(symbol=symbol, qty=q_req)
+        q_dec, qty_precision = self._normalize_qty(symbol=symbol, qty=q_req)
         if float(q_dec or 0) <= 0:
             raise LiveTradingError(f"Invalid qty (below step/min): requested={q_req}")
         body: Dict[str, Any] = {
@@ -241,7 +299,7 @@ class BybitClient(BaseRestClient):
             "symbol": sym,
             "side": "Buy" if sd == "buy" else "Sell",
             "orderType": "Market",
-            "qty": self._dec_str(q_dec),
+            "qty": self._dec_str(q_dec, strict_precision=qty_precision),
             "timeInForce": "GTC",
         }
         if reduce_only and self.category == "linear":
@@ -271,7 +329,7 @@ class BybitClient(BaseRestClient):
         px = float(price or 0.0)
         if q_req <= 0 or px <= 0:
             raise LiveTradingError("Invalid qty/price")
-        q_dec = self._normalize_qty(symbol=symbol, qty=q_req)
+        q_dec, qty_precision = self._normalize_qty(symbol=symbol, qty=q_req)
         if float(q_dec or 0) <= 0:
             raise LiveTradingError(f"Invalid qty (below step/min): requested={q_req}")
         body: Dict[str, Any] = {
@@ -279,7 +337,7 @@ class BybitClient(BaseRestClient):
             "symbol": sym,
             "side": "Buy" if sd == "buy" else "Sell",
             "orderType": "Limit",
-            "qty": self._dec_str(q_dec),
+            "qty": self._dec_str(q_dec, strict_precision=qty_precision),
             "price": str(px),
             "timeInForce": "GTC",
         }
