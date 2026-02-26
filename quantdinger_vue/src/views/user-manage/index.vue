@@ -140,6 +140,11 @@
             </div>
             <div class="summary-info">
               <div class="summary-value">{{ strategySummary.running_strategies || 0 }}</div>
+              <div class="summary-sub">
+                {{ $t('systemOverview.live') || '实盘' }}: {{ strategySummary.running_live_strategies || 0 }}
+                /
+                {{ $t('systemOverview.signal') || '仅通知' }}: {{ strategySummary.running_signal_strategies || 0 }}
+              </div>
               <div class="summary-label">{{ $t('systemOverview.runningStrategies') || 'Running' }}</div>
             </div>
           </div>
@@ -149,6 +154,11 @@
             </div>
             <div class="summary-info">
               <div class="summary-value">{{ formatNumber(strategySummary.total_capital) }}</div>
+              <div class="summary-sub">
+                {{ $t('systemOverview.live') || '实盘' }}: {{ formatNumber(strategySummary.live_capital) }}
+                /
+                {{ $t('systemOverview.signal') || '仅通知' }}: {{ formatNumber(strategySummary.signal_capital) }}
+              </div>
               <div class="summary-label">{{ $t('systemOverview.totalCapital') || 'Total Capital' }}</div>
             </div>
           </div>
@@ -160,6 +170,11 @@
               <div class="summary-value" :class="(strategySummary.total_pnl || 0) >= 0 ? 'text-profit' : 'text-loss'">
                 {{ formatPnl(strategySummary.total_pnl) }}
                 <span class="roi-badge">{{ strategySummary.total_roi || 0 }}%</span>
+              </div>
+              <div class="summary-sub">
+                {{ $t('systemOverview.live') || '实盘' }}: {{ formatPnl(strategySummary.live_pnl) }}
+                /
+                {{ $t('systemOverview.signal') || '仅通知' }}: {{ formatPnl(strategySummary.signal_pnl) }}
               </div>
               <div class="summary-label">{{ $t('systemOverview.totalPnl') || 'Total PnL' }}</div>
             </div>
@@ -1151,6 +1166,15 @@ export default {
           }
         }
 
+        .summary-sub {
+          font-size: 12px;
+          color: #64748b;
+          margin-top: 2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
         .summary-label {
           font-size: 13px;
           color: #94a3b8;
@@ -1329,6 +1353,9 @@ export default {
           .roi-badge {
             background: rgba(255, 255, 255, 0.08);
           }
+        }
+        .summary-sub {
+          color: #8b949e;
         }
         .summary-label {
           color: #6e7681;

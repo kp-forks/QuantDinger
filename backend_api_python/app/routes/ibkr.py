@@ -1,7 +1,7 @@
 """
 Interactive Brokers API Routes
 
-Standalone API endpoints for US and Hong Kong stock trading.
+Standalone API endpoints for US stock trading.
 """
 
 from flask import Blueprint, request, jsonify
@@ -235,7 +235,7 @@ def place_order():
         "symbol": "AAPL",         // Required, symbol code
         "side": "buy",            // Required, buy or sell
         "quantity": 10,           // Required, number of shares
-        "marketType": "USStock",  // Optional, USStock or HShare, default USStock
+        "marketType": "USStock",  // Optional, default USStock
         "orderType": "market",    // Optional, market or limit, default market
         "price": 150.00           // Required for limit orders
     }

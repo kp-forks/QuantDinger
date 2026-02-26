@@ -105,6 +105,9 @@
         <!-- 底部操作区域 -->
         <div class="detail-footer">
           <div class="price-info">
+            <a-tag v-if="detail.vip_free" color="gold" style="margin-right: 8px;">
+              {{ $t('community.vipFree') }}
+            </a-tag>
             <span v-if="detail.pricing_type === 'free' || detail.price <= 0" class="free-badge">
               {{ $t('community.free') }}
             </span>

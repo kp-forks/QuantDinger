@@ -21,6 +21,9 @@
       <div class="price-tag" :class="isPaid ? 'paid' : 'free'">
         {{ isPaid ? `${indicator.price} ${$t('community.credits')}` : $t('community.free') }}
       </div>
+      <div v-if="indicator.vip_free" class="vip-free-tag">
+        {{ $t('community.vipFree') }}
+      </div>
       <div v-if="indicator.is_own" class="own-tag">
         {{ $t('community.myIndicator') }}
       </div>
@@ -248,6 +251,18 @@ export default {
     .purchased-tag {
       background: rgba(82, 196, 26, 0.85);
     }
+  }
+
+  .vip-free-tag {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(250, 173, 20, 0.92);
+    color: #1f1f1f;
   }
 
   .card-content {

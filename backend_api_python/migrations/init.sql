@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS qd_users (
     role VARCHAR(20) DEFAULT 'user',       -- admin/manager/user/viewer
     credits DECIMAL(20,2) DEFAULT 0,       -- 积分余额
     vip_expires_at TIMESTAMP,              -- VIP过期时间
+    vip_plan VARCHAR(20) DEFAULT '',       -- VIP套餐：monthly/yearly/lifetime
+    vip_is_lifetime BOOLEAN DEFAULT FALSE, -- 是否永久会员
+    vip_monthly_credits_last_grant TIMESTAMP, -- 永久会员上次发放月度积分时间
     email_verified BOOLEAN DEFAULT FALSE,  -- 邮箱是否已验证
     referred_by INTEGER,                   -- 邀请人ID
     notification_settings TEXT DEFAULT '', -- 用户通知配置 JSON (telegram_chat_id, default_channels等)
@@ -50,6 +53,47 @@ CREATE TABLE IF NOT EXISTS qd_credits_log (
 CREATE INDEX IF NOT EXISTS idx_credits_log_user_id ON qd_credits_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_credits_log_action ON qd_credits_log(action);
 CREATE INDEX IF NOT EXISTS idx_credits_log_created_at ON qd_credits_log(created_at);
+
+-- =============================================================================
+-- 1.55. Membership Orders (会员订单 - Mock支付)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS qd_membership_orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    plan VARCHAR(20) NOT NULL,             -- monthly/yearly/lifetime
+    price_usd DECIMAL(10,2) DEFAULT 0,     -- 订单金额（USD）
+    status VARCHAR(20) DEFAULT 'paid',     -- paid/pending/failed/refunded (mock 默认 paid)
+    created_at TIMESTAMP DEFAULT NOW(),
+    paid_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_membership_orders_user_id ON qd_membership_orders(user_id);
+
+-- =============================================================================
+-- 1.56. USDT Orders (USDT 收款订单 - 每单独立地址)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS qd_usdt_orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    plan VARCHAR(20) NOT NULL,                 -- monthly/yearly/lifetime
+    chain VARCHAR(20) NOT NULL DEFAULT 'TRC20',-- TRC20 (MVP)
+    amount_usdt DECIMAL(20,6) NOT NULL DEFAULT 0,
+    address_index INTEGER NOT NULL DEFAULT 0,  -- HD 派生索引
+    address VARCHAR(80) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending/paid/confirmed/expired/cancelled/failed
+    tx_hash VARCHAR(120) DEFAULT '',
+    paid_at TIMESTAMP,
+    confirmed_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_orders_address_unique ON qd_usdt_orders(chain, address);
+CREATE INDEX IF NOT EXISTS idx_usdt_orders_user_id ON qd_usdt_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_usdt_orders_status ON qd_usdt_orders(status);
 
 -- =============================================================================
 -- 1.6. Verification Codes (邮箱验证码)
@@ -300,6 +344,7 @@ CREATE TABLE IF NOT EXISTS qd_indicator_codes (
    price numeric(10, 2) DEFAULT 0 NOT NULL,
    is_encrypted int4 DEFAULT 0 NOT NULL,
    preview_image varchar(500) DEFAULT ''::character varying NULL,
+   vip_free boolean DEFAULT false, -- VIP免费指标：VIP可免扣积分使用
    createtime int8 NULL,
    updatetime int8 NULL,
    created_at timestamp DEFAULT now(),
@@ -523,17 +568,6 @@ CREATE INDEX IF NOT EXISTS idx_market_symbols_is_hot ON qd_market_symbols(market
 
 -- Seed data: Hot symbols for each market
 INSERT INTO qd_market_symbols (market, symbol, name, exchange, currency, is_active, is_hot, sort_order) VALUES
--- AShare (China A-Shares)
-('AShare', '000001', '平安银行', 'SZSE', 'CNY', 1, 1, 100),
-('AShare', '000002', '万科A', 'SZSE', 'CNY', 1, 1, 99),
-('AShare', '600000', '浦发银行', 'SSE', 'CNY', 1, 1, 98),
-('AShare', '600036', '招商银行', 'SSE', 'CNY', 1, 1, 97),
-('AShare', '600519', '贵州茅台', 'SSE', 'CNY', 1, 1, 96),
-('AShare', '000858', '五粮液', 'SZSE', 'CNY', 1, 1, 95),
-('AShare', '002415', '海康威视', 'SZSE', 'CNY', 1, 1, 94),
-('AShare', '300059', '东方财富', 'SZSE', 'CNY', 1, 1, 93),
-('AShare', '000725', '京东方A', 'SZSE', 'CNY', 1, 1, 92),
-('AShare', '002594', '比亚迪', 'SZSE', 'CNY', 1, 1, 91),
 -- USStock (US Stocks)
 ('USStock', 'AAPL', 'Apple Inc.', 'NASDAQ', 'USD', 1, 1, 100),
 ('USStock', 'MSFT', 'Microsoft Corporation', 'NASDAQ', 'USD', 1, 1, 99),
@@ -545,17 +579,6 @@ INSERT INTO qd_market_symbols (market, symbol, name, exchange, currency, is_acti
 ('USStock', 'JPM', 'JPMorgan Chase & Co.', 'NYSE', 'USD', 1, 1, 93),
 ('USStock', 'V', 'Visa Inc.', 'NYSE', 'USD', 1, 1, 92),
 ('USStock', 'JNJ', 'Johnson & Johnson', 'NYSE', 'USD', 1, 1, 91),
--- HShare (Hong Kong Stocks)
-('HShare', '00700', 'Tencent Holdings', 'HKEX', 'HKD', 1, 1, 100),
-('HShare', '09988', 'Alibaba Group', 'HKEX', 'HKD', 1, 1, 99),
-('HShare', '03690', 'Meituan', 'HKEX', 'HKD', 1, 1, 98),
-('HShare', '01810', 'Xiaomi Corporation', 'HKEX', 'HKD', 1, 1, 97),
-('HShare', '02318', 'Ping An Insurance', 'HKEX', 'HKD', 1, 1, 96),
-('HShare', '01398', 'ICBC', 'HKEX', 'HKD', 1, 1, 95),
-('HShare', '00939', 'CCB', 'HKEX', 'HKD', 1, 1, 94),
-('HShare', '01299', 'AIA Group', 'HKEX', 'HKD', 1, 1, 93),
-('HShare', '02020', 'Anta Sports', 'HKEX', 'HKD', 1, 1, 92),
-('HShare', '01024', 'Kuaishou Technology', 'HKEX', 'HKD', 1, 1, 91),
 -- Crypto
 ('Crypto', 'BTC/USDT', 'Bitcoin', 'Binance', 'USDT', 1, 1, 100),
 ('Crypto', 'ETH/USDT', 'Ethereum', 'Binance', 'USDT', 1, 1, 99),

@@ -119,7 +119,7 @@
         </div>
         <!-- 版本号 -->
         <div class="footer-section version">
-          V2.1.3
+          V2.2.1
         </div>
       </div>
     </div>

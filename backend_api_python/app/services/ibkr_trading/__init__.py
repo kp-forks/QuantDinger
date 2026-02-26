@@ -1,7 +1,7 @@
 """
 Interactive Brokers (IBKR) Trading Module
 
-Supports US stocks and Hong Kong stocks trading via TWS or IB Gateway.
+Supports US stocks trading via TWS or IB Gateway.
 
 Port Reference:
 - TWS Live: 7497, TWS Paper: 7496

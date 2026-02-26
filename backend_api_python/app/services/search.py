@@ -3,7 +3,7 @@ Search service v2.0 - 增强版搜索服务
 整合多个搜索引擎，支持 API Key 轮换和故障转移
 
 支持的搜索引擎（按优先级）：
-1. Bocha (博查) - 国内搜索优化，A股新闻推荐
+1. Bocha (博查) - 搜索优化
 2. Tavily - 专为AI设计，免费1000次/月
 3. SerpAPI - Google/Bing 结果抓取
 4. Google CSE - 自定义搜索引擎
@@ -972,7 +972,7 @@ class SearchService:
         self,
         stock_code: str,
         stock_name: str,
-        market: str = "AShare",
+        market: str = "USStock",
         max_results: int = 5
     ) -> SearchResponse:
         """
@@ -997,14 +997,14 @@ class SearchService:
             search_days = 1
         
         # 根据市场类型构建搜索查询
-        if market == "AShare":
-            query = f"{stock_name} {stock_code} 股票 最新消息 利好 利空"
-        elif market == "USStock":
+        if market == "USStock":
             query = f"{stock_name} {stock_code} stock news latest"
         elif market == "Crypto":
             query = f"{stock_name} crypto news price analysis"
+        elif market == "Forex":
+            query = f"{stock_name} {stock_code} forex news analysis"
         else:
-            query = f"{stock_name} {stock_code} 最新消息"
+            query = f"{stock_name} {stock_code} latest news"
         
         logger.info(f"搜索股票新闻: {stock_name}({stock_code}), market={market}, days={search_days}")
         

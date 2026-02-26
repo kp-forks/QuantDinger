@@ -10,7 +10,7 @@ Billing Service - 统一计费服务
 """
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Dict, Any, Optional, Tuple
 
@@ -27,7 +27,8 @@ BILLING_CONFIG_PREFIX = 'BILLING_'
 DEFAULT_BILLING_CONFIG = {
     # 全局开关
     'enabled': False,  # 是否启用计费
-    'vip_bypass': True,  # VIP用户是否免费
+    # IMPORTANT: VIP 不再默认免扣积分（VIP 仅对“VIP免费指标”生效）
+    'vip_bypass': False,  # VIP用户是否免费（功能计费层面的旁路，默认关闭）
     
     # 各功能积分消耗（0表示免费）
     'cost_ai_analysis': 10,       # AI分析 每次消耗积分
@@ -127,10 +128,15 @@ class BillingService:
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
-                cur.execute(
-                    "SELECT vip_expires_at FROM qd_users WHERE id = ?",
-                    (user_id,)
-                )
+                # Ensure lifetime membership monthly credits are granted (best-effort, silent on failure).
+                self._ensure_membership_schema_best_effort(cur)
+                self._grant_lifetime_monthly_credits_best_effort(cur, user_id)
+                try:
+                    db.commit()
+                except Exception:
+                    pass
+
+                cur.execute("SELECT vip_expires_at FROM qd_users WHERE id = ?", (user_id,))
                 row = cur.fetchone()
                 cur.close()
                 
@@ -152,6 +158,298 @@ class BillingService:
         except Exception as e:
             logger.error(f"get_user_vip_status failed: {e}")
             return False, None
+
+    # ==================== Membership Plans (VIP) ====================
+
+    def get_membership_plans(self) -> Dict[str, Any]:
+        """
+        Get membership plans from .env (configured via Settings UI).
+
+        Plan keys:
+          - monthly: price_usd, credits_once, duration_days
+          - yearly: price_usd, credits_once, duration_days
+          - lifetime: price_usd, credits_monthly (granted every 30 days)
+        """
+        def _f(key: str, default: float) -> float:
+            try:
+                return float(os.getenv(key, str(default)).strip())
+            except Exception:
+                return float(default)
+
+        def _i(key: str, default: int) -> int:
+            try:
+                return int(float(os.getenv(key, str(default)).strip()))
+            except Exception:
+                return int(default)
+
+        return {
+            "monthly": {
+                "plan": "monthly",
+                "price_usd": _f("MEMBERSHIP_MONTHLY_PRICE_USD", 19.9),
+                "credits_once": _i("MEMBERSHIP_MONTHLY_CREDITS", 500),
+                "duration_days": 30,
+            },
+            "yearly": {
+                "plan": "yearly",
+                "price_usd": _f("MEMBERSHIP_YEARLY_PRICE_USD", 199.0),
+                "credits_once": _i("MEMBERSHIP_YEARLY_CREDITS", 8000),
+                "duration_days": 365,
+            },
+            "lifetime": {
+                "plan": "lifetime",
+                "price_usd": _f("MEMBERSHIP_LIFETIME_PRICE_USD", 499.0),
+                # Lifetime: monthly credits granted periodically
+                "credits_monthly": _i("MEMBERSHIP_LIFETIME_MONTHLY_CREDITS", 800),
+            },
+        }
+
+    def purchase_membership(self, user_id: int, plan: str) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        Purchase membership plan (mock payment: immediately activates).
+
+        NOTE: Real payment gateway can be integrated later; this function is the single activation point.
+        """
+        plan = (plan or "").strip().lower()
+        plans = self.get_membership_plans()
+        if plan not in plans:
+            return False, "invalid_plan", {}
+
+        try:
+            with get_db_connection() as db:
+                cur = db.cursor()
+                self._ensure_membership_schema_best_effort(cur)
+                self._ensure_membership_orders_table_best_effort(cur)
+
+                now = datetime.now(timezone.utc)
+
+                # Read current VIP expiry to support stacking for monthly/yearly.
+                cur.execute("SELECT vip_expires_at FROM qd_users WHERE id = ?", (user_id,))
+                row = cur.fetchone() or {}
+                current_expires = row.get("vip_expires_at")
+                if isinstance(current_expires, str) and current_expires:
+                    try:
+                        current_expires = datetime.fromisoformat(current_expires.replace("Z", "+00:00"))
+                    except Exception:
+                        current_expires = None
+                if current_expires and current_expires.tzinfo is None:
+                    current_expires = current_expires.replace(tzinfo=timezone.utc)
+
+                base_time = current_expires if (current_expires and current_expires > now) else now
+
+                vip_expires_at = None
+                vip_plan = plan
+                vip_is_lifetime = False
+
+                if plan in ("monthly", "yearly"):
+                    days = int(plans[plan].get("duration_days") or (30 if plan == "monthly" else 365))
+                    vip_expires_at = base_time + timedelta(days=days)
+                else:
+                    # Lifetime: set very long expiry + mark lifetime flag
+                    vip_expires_at = now + timedelta(days=365 * 100)
+                    vip_is_lifetime = True
+
+                # Create order record (mock paid)
+                order_plan = plan
+                order_price_usd = float(plans[plan].get("price_usd") or 0)
+                order_id = None
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO qd_membership_orders
+                          (user_id, plan, price_usd, status, created_at, paid_at)
+                        VALUES (?, ?, ?, 'paid', NOW(), NOW())
+                        RETURNING id
+                        """,
+                        (user_id, order_plan, order_price_usd),
+                    )
+                    row2 = cur.fetchone() or {}
+                    order_id = row2.get("id")
+                except Exception:
+                    # Fallback for DB drivers without RETURNING support
+                    cur.execute(
+                        """
+                        INSERT INTO qd_membership_orders
+                          (user_id, plan, price_usd, status, created_at, paid_at)
+                        VALUES (?, ?, ?, 'paid', NOW(), NOW())
+                        """,
+                        (user_id, order_plan, order_price_usd),
+                    )
+                    order_id = getattr(cur, "lastrowid", None)
+                order_ref = str(order_id or "")
+
+                # Update user VIP fields
+                cur.execute(
+                    """
+                    UPDATE qd_users
+                    SET vip_expires_at = ?,
+                        vip_plan = ?,
+                        vip_is_lifetime = ?,
+                        updated_at = NOW()
+                    WHERE id = ?
+                    """,
+                    (vip_expires_at, vip_plan, 1 if vip_is_lifetime else 0, user_id),
+                )
+
+                # Credits grants
+                if plan in ("monthly", "yearly"):
+                    credits_once = int(plans[plan].get("credits_once") or 0)
+                    if credits_once > 0:
+                        # Use add_credits to update balance and log
+                        # NOTE: add_credits opens its own connection, so we do a direct update here for atomicity.
+                        self._add_credits_in_tx(cur, user_id, credits_once, action="membership_bonus",
+                                                remark=f"Membership bonus ({plan})", reference_id=order_ref)
+                else:
+                    # Lifetime: grant first month's credits immediately and set last grant time
+                    monthly_credits = int(plans["lifetime"].get("credits_monthly") or 0)
+                    if monthly_credits > 0:
+                        self._add_credits_in_tx(cur, user_id, monthly_credits, action="membership_monthly",
+                                                remark="Lifetime membership monthly credits", reference_id=order_ref)
+                    try:
+                        cur.execute(
+                            "UPDATE qd_users SET vip_monthly_credits_last_grant = ?, updated_at = NOW() WHERE id = ?",
+                            (now, user_id),
+                        )
+                    except Exception:
+                        # Column may not exist; ignore
+                        pass
+
+                # VIP log entry (for audit)
+                cur.execute(
+                    """
+                    INSERT INTO qd_credits_log
+                      (user_id, action, amount, balance_after, remark, operator_id, reference_id, created_at)
+                    VALUES (?, 'membership_purchase', 0,
+                            (SELECT credits FROM qd_users WHERE id = ?),
+                            ?, NULL, ?, NOW())
+                    """,
+                    (user_id, user_id, f"Membership purchased: {plan}", order_ref),
+                )
+
+                db.commit()
+                cur.close()
+
+            return True, "success", {
+                "order_id": order_id,
+                "plan": plan,
+                "vip_expires_at": vip_expires_at.isoformat() if vip_expires_at else None,
+            }
+        except Exception as e:
+            logger.error(f"purchase_membership failed: {e}", exc_info=True)
+            return False, f"error:{str(e)}", {}
+
+    def _ensure_membership_schema_best_effort(self, cur):
+        """Best-effort schema upgrade for membership fields on qd_users."""
+        try:
+            # vip_plan / vip_is_lifetime / vip_monthly_credits_last_grant
+            cur.execute("ALTER TABLE qd_users ADD COLUMN IF NOT EXISTS vip_plan VARCHAR(20) DEFAULT ''")
+            cur.execute("ALTER TABLE qd_users ADD COLUMN IF NOT EXISTS vip_is_lifetime BOOLEAN DEFAULT FALSE")
+            cur.execute("ALTER TABLE qd_users ADD COLUMN IF NOT EXISTS vip_monthly_credits_last_grant TIMESTAMP")
+        except Exception:
+            # Ignore schema upgrade failures (e.g., insufficient privileges)
+            pass
+
+    def _ensure_membership_orders_table_best_effort(self, cur):
+        """Best-effort create membership orders table (mock payment)."""
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS qd_membership_orders (
+                  id SERIAL PRIMARY KEY,
+                  user_id INTEGER NOT NULL,
+                  plan VARCHAR(20) NOT NULL,
+                  price_usd DECIMAL(10,2) DEFAULT 0,
+                  status VARCHAR(20) DEFAULT 'paid',
+                  created_at TIMESTAMP DEFAULT NOW(),
+                  paid_at TIMESTAMP
+                )
+                """
+            )
+        except Exception:
+            pass
+
+    def _add_credits_in_tx(self, cur, user_id: int, amount: int, action: str, remark: str, reference_id: str = ''):
+        """Add credits within an existing DB transaction and write qd_credits_log."""
+        try:
+            cur.execute("SELECT credits FROM qd_users WHERE id = ?", (user_id,))
+            row = cur.fetchone() or {}
+            credits = Decimal(str(row.get("credits", 0) or 0))
+            new_balance = credits + Decimal(str(amount))
+
+            cur.execute("UPDATE qd_users SET credits = ?, updated_at = NOW() WHERE id = ?", (float(new_balance), user_id))
+            cur.execute(
+                """
+                INSERT INTO qd_credits_log
+                  (user_id, action, amount, balance_after, remark, operator_id, reference_id, created_at)
+                VALUES (?, ?, ?, ?, ?, NULL, ?, NOW())
+                """,
+                (user_id, action, amount, float(new_balance), remark, reference_id),
+            )
+        except Exception as e:
+            logger.debug(f"_add_credits_in_tx failed: {e}", exc_info=True)
+
+    def _grant_lifetime_monthly_credits_best_effort(self, cur, user_id: int):
+        """Grant lifetime monthly credits if due (best-effort)."""
+        try:
+            plans = self.get_membership_plans()
+            monthly_credits = int(plans.get("lifetime", {}).get("credits_monthly") or 0)
+            if monthly_credits <= 0:
+                return
+
+            cur.execute(
+                "SELECT vip_is_lifetime, vip_expires_at, vip_monthly_credits_last_grant FROM qd_users WHERE id = ?",
+                (user_id,),
+            )
+            row = cur.fetchone() or {}
+            if not row.get("vip_is_lifetime"):
+                return
+
+            expires_at = row.get("vip_expires_at")
+            if isinstance(expires_at, str) and expires_at:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                except Exception:
+                    expires_at = None
+            if expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            if expires_at and expires_at <= now:
+                return
+
+            last = row.get("vip_monthly_credits_last_grant")
+            if isinstance(last, str) and last:
+                try:
+                    last = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                except Exception:
+                    last = None
+            if last and last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+
+            # First time: do nothing (purchase flow already grants), but set last to now if missing
+            if not last:
+                cur.execute(
+                    "UPDATE qd_users SET vip_monthly_credits_last_grant = ?, updated_at = NOW() WHERE id = ?",
+                    (now, user_id),
+                )
+                return
+
+            # Use 30-day periods. Catch up up to 6 periods max to avoid abuse.
+            delta_days = int((now - last).total_seconds() // 86400)
+            periods = delta_days // 30
+            if periods <= 0:
+                return
+            if periods > 6:
+                periods = 6
+
+            total = monthly_credits * periods
+            self._add_credits_in_tx(cur, user_id, total, action="membership_monthly",
+                                    remark=f"Lifetime membership monthly credits x{periods}", reference_id="")
+            cur.execute(
+                "UPDATE qd_users SET vip_monthly_credits_last_grant = ?, updated_at = NOW() WHERE id = ?",
+                (now, user_id),
+            )
+        except Exception:
+            # Best-effort; never break caller
+            pass
     
     def check_and_consume(self, user_id: int, feature: str, reference_id: str = '') -> Tuple[bool, str]:
         """
@@ -420,7 +718,7 @@ class BillingService:
             'is_vip': is_vip,
             'vip_expires_at': vip_expires_at.isoformat() if vip_expires_at else None,
             'billing_enabled': config.get('enabled', False),
-            'vip_bypass': config.get('vip_bypass', True),
+            'vip_bypass': config.get('vip_bypass', False),
             # Public support link for credits recharge / VIP purchase
             'recharge_telegram_url': os.getenv('RECHARGE_TELEGRAM_URL', '').strip() or 'https://t.me/your_support_bot',
             # 功能费用（供前端显示）

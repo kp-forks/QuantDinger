@@ -498,6 +498,12 @@
             />
             <span style="margin-left: 8px;">{{ $t('community.credits') }}</span>
           </a-form-model-item>
+          <a-form-model-item v-if="publishPricingType === 'paid'" :label="$t('dashboard.indicator.publish.vipFree')">
+            <a-switch v-model="publishVipFree" />
+            <div style="margin-top: 6px; color: rgba(0,0,0,0.45); font-size: 12px;">
+              {{ $t('dashboard.indicator.publish.vipFreeHint') }}
+            </div>
+          </a-form-model-item>
           <a-form-model-item :label="$t('dashboard.indicator.publish.description')" prop="description">
             <a-textarea
               v-model="publishDescription"
@@ -777,6 +783,7 @@ export default {
     const publishPricingType = ref('free')
     const publishPrice = ref(10)
     const publishDescription = ref('')
+    const publishVipFree = ref(false)
     const publishRules = {
       price: [
         { required: true, message: '请输入价格', trigger: 'blur', type: 'number' }
@@ -975,14 +982,12 @@ export default {
             i18nKey: `dashboard.analysis.market.${key}`
           }))
         } else {
-          // Order: USStock > Crypto > Forex > Futures > HShare > AShare
+          // Order: USStock > Crypto > Forex > Futures
           marketTypes.value = [
             { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
             { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
             { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
-            { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' },
-            { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
-            { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' }
+            { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
           ]
         }
 
@@ -991,14 +996,12 @@ export default {
           selectedMarketTab.value = marketTypes.value[0].value
         }
       } catch (error) {
-        // Order: USStock > Crypto > Forex > Futures > HShare > AShare
+        // Order: USStock > Crypto > Forex > Futures
         marketTypes.value = [
           { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
           { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
           { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
-          { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' },
-          { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
-          { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' }
+          { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
         ]
       }
     }
@@ -1656,6 +1659,7 @@ export default {
       publishPricingType.value = indicator.pricing_type || 'free'
       publishPrice.value = indicator.price || 10
       publishDescription.value = indicator.description || ''
+      publishVipFree.value = !!indicator.vip_free
       showPublishModal.value = true
     }
 
@@ -1679,7 +1683,8 @@ export default {
             description: publishDescription.value,
             publishToCommunity: true,
             pricingType: publishPricingType.value,
-            price: publishPricingType.value === 'paid' ? publishPrice.value : 0
+            price: publishPricingType.value === 'paid' ? publishPrice.value : 0,
+            vipFree: publishPricingType.value === 'paid' ? publishVipFree.value : false
           }
         })
 
@@ -1715,7 +1720,8 @@ export default {
             description: publishIndicator.value.description,
             publishToCommunity: false,
             pricingType: 'free',
-            price: 0
+            price: 0,
+            vipFree: false
           }
         })
 
@@ -1845,9 +1851,7 @@ export default {
     // 获取市场名称（多语言）
     const getMarketName = (market) => {
       const marketMap = {
-        'AShare': 'dashboard.indicator.market.AShare',
         'USStock': 'dashboard.indicator.market.USStock',
-        'HShare': 'dashboard.indicator.market.HShare',
         'Crypto': 'dashboard.indicator.market.Crypto',
         'Forex': 'dashboard.indicator.market.Forex',
         'Futures': 'dashboard.indicator.market.Futures'
@@ -1862,9 +1866,7 @@ export default {
         'USStock': 'green',
         'Crypto': 'purple',
         'Forex': 'gold',
-        'Futures': 'cyan',
-        'AShare': 'blue',
-        'HShare': 'orange'
+        'Futures': 'cyan'
       }
       return colors[market] || 'default'
     }
@@ -2048,6 +2050,7 @@ getMarketColor,
       publishPricingType,
       publishPrice,
       publishDescription,
+      publishVipFree,
       publishRules,
       handlePublishIndicator,
       handleConfirmPublish,

@@ -20,7 +20,7 @@ def get_kline():
     获取K线数据
     
     参数:
-        market: 市场类型 (Crypto, USStock, AShare, HShare, Forex, Futures)
+        market: 市场类型 (Crypto, USStock, Forex, Futures)
         symbol: 交易对/股票代码
         timeframe: 时间周期 (1m, 5m, 15m, 30m, 1H, 4H, 1D, 1W)
         limit: 数据条数 (默认300)

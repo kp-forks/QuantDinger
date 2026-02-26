@@ -985,11 +985,61 @@ def get_system_strategies():
                 'updated_at': updated_at
             })
 
-        # Compute summary stats
-        all_running = [i for i in items if i['status'] == 'running']
-        total_capital = sum(i['initial_capital'] for i in items)
-        total_system_pnl = sum(i['total_pnl'] for i in items)
-        total_running = len(all_running)
+        # Compute summary stats from all matched strategies (not just current page items).
+        with get_db_connection() as db:
+            cur = db.cursor()
+
+            # Aggregate strategy counts/capital by execution mode and running status.
+            agg_sql = f"""
+                SELECT
+                    COUNT(*) AS total_strategies,
+                    COALESCE(SUM(s.initial_capital), 0) AS total_capital,
+                    COALESCE(SUM(CASE WHEN s.status = 'running' THEN 1 ELSE 0 END), 0) AS running_strategies,
+                    COALESCE(SUM(CASE WHEN s.execution_mode = 'live' THEN 1 ELSE 0 END), 0) AS live_strategies,
+                    COALESCE(SUM(CASE WHEN s.execution_mode = 'signal' THEN 1 ELSE 0 END), 0) AS signal_strategies,
+                    COALESCE(SUM(CASE WHEN s.status = 'running' AND s.execution_mode = 'live' THEN 1 ELSE 0 END), 0) AS running_live_strategies,
+                    COALESCE(SUM(CASE WHEN s.status = 'running' AND s.execution_mode = 'signal' THEN 1 ELSE 0 END), 0) AS running_signal_strategies,
+                    COALESCE(SUM(CASE WHEN s.execution_mode = 'live' THEN s.initial_capital ELSE 0 END), 0) AS live_capital,
+                    COALESCE(SUM(CASE WHEN s.execution_mode = 'signal' THEN s.initial_capital ELSE 0 END), 0) AS signal_capital
+                FROM qd_strategies_trading s
+                LEFT JOIN qd_users u ON u.id = s.user_id
+                {where_clause}
+            """
+            cur.execute(agg_sql, tuple(params))
+            agg_row = cur.fetchone() or {}
+
+            # Aggregate unrealized pnl from current positions.
+            unreal_sql = f"""
+                SELECT COALESCE(SUM(p.unrealized_pnl), 0) AS total_unrealized,
+                       COALESCE(SUM(CASE WHEN s.execution_mode = 'live' THEN p.unrealized_pnl ELSE 0 END), 0) AS live_unrealized,
+                       COALESCE(SUM(CASE WHEN s.execution_mode = 'signal' THEN p.unrealized_pnl ELSE 0 END), 0) AS signal_unrealized
+                FROM qd_strategy_positions p
+                JOIN qd_strategies_trading s ON s.id = p.strategy_id
+                LEFT JOIN qd_users u ON u.id = s.user_id
+                {where_clause}
+            """
+            cur.execute(unreal_sql, tuple(params))
+            unreal_row = cur.fetchone() or {}
+
+            # Aggregate realized pnl from trade history.
+            realized_sql = f"""
+                SELECT COALESCE(SUM(t.profit), 0) AS total_realized,
+                       COALESCE(SUM(CASE WHEN s.execution_mode = 'live' THEN t.profit ELSE 0 END), 0) AS live_realized,
+                       COALESCE(SUM(CASE WHEN s.execution_mode = 'signal' THEN t.profit ELSE 0 END), 0) AS signal_realized
+                FROM qd_strategy_trades t
+                JOIN qd_strategies_trading s ON s.id = t.strategy_id
+                LEFT JOIN qd_users u ON u.id = s.user_id
+                {where_clause}
+            """
+            cur.execute(realized_sql, tuple(params))
+            realized_row = cur.fetchone() or {}
+            cur.close()
+
+        total_capital = float(agg_row.get('total_capital') or 0)
+        total_running = int(agg_row.get('running_strategies') or 0)
+        total_system_pnl = float(unreal_row.get('total_unrealized') or 0) + float(realized_row.get('total_realized') or 0)
+        live_pnl = float(unreal_row.get('live_unrealized') or 0) + float(realized_row.get('live_realized') or 0)
+        signal_pnl = float(unreal_row.get('signal_unrealized') or 0) + float(realized_row.get('signal_realized') or 0)
 
         return jsonify({
             'code': 1,
@@ -1000,11 +1050,19 @@ def get_system_strategies():
                 'page': page,
                 'page_size': page_size,
                 'summary': {
-                    'total_strategies': total,
+                    'total_strategies': int(agg_row.get('total_strategies') or total),
                     'running_strategies': total_running,
                     'total_capital': round(total_capital, 2),
                     'total_pnl': round(total_system_pnl, 4),
-                    'total_roi': round((total_system_pnl / total_capital * 100) if total_capital > 0 else 0, 2)
+                    'total_roi': round((total_system_pnl / total_capital * 100) if total_capital > 0 else 0, 2),
+                    'live_strategies': int(agg_row.get('live_strategies') or 0),
+                    'signal_strategies': int(agg_row.get('signal_strategies') or 0),
+                    'running_live_strategies': int(agg_row.get('running_live_strategies') or 0),
+                    'running_signal_strategies': int(agg_row.get('running_signal_strategies') or 0),
+                    'live_capital': round(float(agg_row.get('live_capital') or 0), 2),
+                    'signal_capital': round(float(agg_row.get('signal_capital') or 0), 2),
+                    'live_pnl': round(live_pnl, 4),
+                    'signal_pnl': round(signal_pnl, 4)
                 }
             }
         })

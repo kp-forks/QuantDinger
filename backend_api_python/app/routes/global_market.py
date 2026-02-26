@@ -2,7 +2,7 @@
 Global Market Dashboard APIs.
 
 Provides aggregated global market data including:
-- Major indices (US, China, Hong Kong, Europe, Japan)
+- Major indices (US, Europe, Japan, Korea, Australia, India)
 - Forex pairs
 - Crypto prices
 - Market heatmap data (crypto, stocks, forex)
@@ -53,7 +53,7 @@ CACHE_TTL = {
     "market_news": 180,          # 3分钟 - 新闻
     "economic_calendar": 3600,   # 1小时 - 日历事件
     "market_sentiment": 21600,   # 6小时 - 宏观情绪变化缓慢
-    "trading_opportunities": 60, # 1分钟 - 交易机会需要较新
+    "trading_opportunities": 3600, # 1小时 - 每小时更新一次
 }
 
 
@@ -257,12 +257,6 @@ def _fetch_stock_indices() -> List[Dict[str, Any]]:
         {"symbol": "^GSPC", "name_cn": "标普500", "name_en": "S&P 500", "region": "US", "flag": "🇺🇸", "lat": 40.7, "lng": -74.0},
         {"symbol": "^DJI", "name_cn": "道琼斯", "name_en": "Dow Jones", "region": "US", "flag": "🇺🇸", "lat": 38.5, "lng": -77.0},
         {"symbol": "^IXIC", "name_cn": "纳斯达克", "name_en": "NASDAQ", "region": "US", "flag": "🇺🇸", "lat": 37.5, "lng": -122.4},
-        # China Markets - 坐标错开
-        {"symbol": "000001.SS", "name_cn": "上证指数", "name_en": "SSE Composite", "region": "CN", "flag": "🇨🇳", "lat": 31.2, "lng": 121.5},
-        {"symbol": "399001.SZ", "name_cn": "深证成指", "name_en": "SZSE Component", "region": "CN", "flag": "🇨🇳", "lat": 22.5, "lng": 114.1},
-        {"symbol": "399006.SZ", "name_cn": "创业板指", "name_en": "ChiNext", "region": "CN", "flag": "🇨🇳", "lat": 25.0, "lng": 117.0},
-        # Hong Kong - 只保留恒生指数
-        {"symbol": "^HSI", "name_cn": "恒生指数", "name_en": "Hang Seng", "region": "HK", "flag": "🇭🇰", "lat": 22.3, "lng": 114.2},
         # Europe
         {"symbol": "^GDAXI", "name_cn": "德国DAX", "name_en": "DAX", "region": "EU", "flag": "🇩🇪", "lat": 50.1109, "lng": 8.6821},
         {"symbol": "^FTSE", "name_cn": "英国富时100", "name_en": "FTSE 100", "region": "EU", "flag": "🇬🇧", "lat": 51.5074, "lng": -0.1278},
@@ -977,12 +971,12 @@ def _fetch_financial_news(lang: str = "all") -> Dict[str, List[Dict[str, Any]]]:
         
         # Chinese news queries
         cn_queries = [
-            "A股市场最新消息",
             "加密货币新闻",
             "美联储利率",
-            "中国经济数据",
-            "港股市场动态",
+            "美股市场最新消息",
             "外汇市场分析",
+            "全球经济数据",
+            "期货市场动态",
         ]
         
         # English news queries
@@ -1105,42 +1099,6 @@ def _get_economic_calendar() -> List[Dict[str, Any]]:
             "impact_if_below": "bullish",
             "impact_desc": "加息利空欧股，利多欧元",
             "impact_desc_en": "Rate hike: bearish EU stocks, bullish EUR"
-        },
-        {
-            "name": "中国GDP年率",
-            "name_en": "China GDP y/y",
-            "country": "CN",
-            "importance": "high",
-            "forecast": "5.2%",
-            "previous": "5.0%",
-            "impact_if_above": "bullish",
-            "impact_if_below": "bearish",
-            "impact_desc": "GDP高于预期利多A股和港股",
-            "impact_desc_en": "Above forecast: bullish A-shares and HK stocks"
-        },
-        {
-            "name": "中国CPI年率",
-            "name_en": "China CPI y/y",
-            "country": "CN",
-            "importance": "medium",
-            "forecast": "0.3%",
-            "previous": "0.1%",
-            "impact_if_above": "neutral",
-            "impact_if_below": "bearish",
-            "impact_desc": "通胀过低反映需求不足，利空股市",
-            "impact_desc_en": "Low inflation reflects weak demand, bearish stocks"
-        },
-        {
-            "name": "中国PMI",
-            "name_en": "China Manufacturing PMI",
-            "country": "CN",
-            "importance": "medium",
-            "forecast": "50.2",
-            "previous": "49.8",
-            "impact_if_above": "bullish",
-            "impact_if_below": "bearish",
-            "impact_desc": "PMI>50表示扩张，利多A股和大宗商品",
-            "impact_desc_en": "PMI>50 = expansion, bullish A-shares and commodities"
         },
         {
             "name": "日本央行利率决议",
@@ -1634,80 +1592,265 @@ def market_sentiment():
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500
 
 
+def _fetch_stock_opportunity_prices() -> List[Dict[str, Any]]:
+    """Fetch popular US stock prices for opportunity scanning."""
+    stocks = [
+        {"symbol": "AAPL", "name": "Apple"},
+        {"symbol": "MSFT", "name": "Microsoft"},
+        {"symbol": "GOOGL", "name": "Alphabet"},
+        {"symbol": "AMZN", "name": "Amazon"},
+        {"symbol": "TSLA", "name": "Tesla"},
+        {"symbol": "NVDA", "name": "NVIDIA"},
+        {"symbol": "META", "name": "Meta"},
+        {"symbol": "NFLX", "name": "Netflix"},
+        {"symbol": "AMD", "name": "AMD"},
+        {"symbol": "CRM", "name": "Salesforce"},
+        {"symbol": "COIN", "name": "Coinbase"},
+        {"symbol": "BABA", "name": "Alibaba"},
+        {"symbol": "NIO", "name": "NIO"},
+        {"symbol": "PLTR", "name": "Palantir"},
+        {"symbol": "INTC", "name": "Intel"},
+    ]
+
+    try:
+        import yfinance as yf
+
+        symbols = [s["symbol"] for s in stocks]
+        tickers = yf.Tickers(" ".join(symbols))
+
+        result = []
+        for stock in stocks:
+            try:
+                ticker = tickers.tickers.get(stock["symbol"])
+                if ticker:
+                    hist = ticker.history(period="2d")
+                    if len(hist) >= 2:
+                        prev_close = float(hist["Close"].iloc[-2])
+                        current = float(hist["Close"].iloc[-1])
+                        change = ((current - prev_close) / prev_close) * 100
+                    elif len(hist) == 1:
+                        current = float(hist["Close"].iloc[-1])
+                        change = 0
+                    else:
+                        continue
+
+                    result.append({
+                        "symbol": stock["symbol"],
+                        "name": stock["name"],
+                        "price": round(current, 2),
+                        "change": round(change, 2)
+                    })
+            except Exception as e:
+                logger.debug(f"Failed to fetch stock {stock['symbol']}: {e}")
+
+        return result
+    except Exception as e:
+        logger.error(f"Failed to fetch stock opportunity prices: {e}")
+        return []
+
+
+def _analyze_opportunities_crypto(opportunities: list):
+    """Scan crypto market for trading opportunities."""
+    crypto_data = _get_cached("crypto_prices")
+    if not crypto_data:
+        crypto_data = _fetch_crypto_prices()
+        if crypto_data:
+            _set_cached("crypto_prices", crypto_data)
+
+    for coin in (crypto_data or [])[:20]:
+        change = _safe_float(coin.get("change_24h", 0))
+        change_7d = _safe_float(coin.get("change_7d", 0))
+        symbol = coin.get("symbol", "")
+        name = coin.get("name", "")
+        price = _safe_float(coin.get("price", 0))
+
+        signal = None
+        strength = "medium"
+        reason = ""
+        impact = "neutral"
+
+        if change > 15:
+            signal = "overbought"
+            strength = "strong"
+            reason = f"24h涨幅{change:.1f}%，7日涨幅{change_7d:.1f}%，短期超买风险"
+            impact = "bearish"
+        elif change > 8:
+            signal = "bullish_momentum"
+            strength = "medium"
+            reason = f"24h涨幅{change:.1f}%，上涨动能强劲"
+            impact = "bullish"
+        elif change < -15:
+            signal = "oversold"
+            strength = "strong"
+            reason = f"24h跌幅{abs(change):.1f}%，可能超卖反弹"
+            impact = "bullish"
+        elif change < -8:
+            signal = "bearish_momentum"
+            strength = "medium"
+            reason = f"24h跌幅{abs(change):.1f}%，下跌趋势明显"
+            impact = "bearish"
+
+        if signal:
+            opportunities.append({
+                "symbol": symbol,
+                "name": name,
+                "price": price,
+                "change_24h": change,
+                "change_7d": change_7d,
+                "signal": signal,
+                "strength": strength,
+                "reason": reason,
+                "impact": impact,
+                "market": "Crypto",
+                "timestamp": int(time.time())
+            })
+
+
+def _analyze_opportunities_stocks(opportunities: list):
+    """Scan US stocks for trading opportunities."""
+    stock_data = _get_cached("stock_opportunity_prices")
+    if not stock_data:
+        stock_data = _fetch_stock_opportunity_prices()
+        if stock_data:
+            _set_cached("stock_opportunity_prices", stock_data, 3600)
+
+    for stock in (stock_data or []):
+        change = _safe_float(stock.get("change", 0))
+        symbol = stock.get("symbol", "")
+        name = stock.get("name", "")
+        price = _safe_float(stock.get("price", 0))
+
+        signal = None
+        strength = "medium"
+        reason = ""
+        impact = "neutral"
+
+        # US stocks: smaller thresholds than crypto
+        if change > 5:
+            signal = "overbought"
+            strength = "strong"
+            reason = f"日涨幅{change:.1f}%，短期涨幅较大，注意回调风险"
+            impact = "bearish"
+        elif change > 3:
+            signal = "bullish_momentum"
+            strength = "medium"
+            reason = f"日涨幅{change:.1f}%，上涨动能强劲"
+            impact = "bullish"
+        elif change < -5:
+            signal = "oversold"
+            strength = "strong"
+            reason = f"日跌幅{abs(change):.1f}%，可能超卖反弹"
+            impact = "bullish"
+        elif change < -3:
+            signal = "bearish_momentum"
+            strength = "medium"
+            reason = f"日跌幅{abs(change):.1f}%，下跌趋势明显"
+            impact = "bearish"
+
+        if signal:
+            opportunities.append({
+                "symbol": symbol,
+                "name": name,
+                "price": price,
+                "change_24h": change,
+                "signal": signal,
+                "strength": strength,
+                "reason": reason,
+                "impact": impact,
+                "market": "USStock",
+                "timestamp": int(time.time())
+            })
+
+
+def _analyze_opportunities_forex(opportunities: list):
+    """Scan forex pairs for trading opportunities."""
+    forex_data = _get_cached("forex_pairs")
+    if not forex_data:
+        forex_data = _fetch_forex_pairs()
+        if forex_data:
+            _set_cached("forex_pairs", forex_data, 3600)
+
+    for pair in (forex_data or []):
+        change = _safe_float(pair.get("change", 0))
+        symbol = pair.get("symbol", pair.get("name", ""))
+        name = pair.get("name_cn", pair.get("name", ""))
+        price = _safe_float(pair.get("price", 0))
+
+        signal = None
+        strength = "medium"
+        reason = ""
+        impact = "neutral"
+
+        # Forex: even smaller thresholds
+        if change > 1.5:
+            signal = "overbought"
+            strength = "strong"
+            reason = f"日涨幅{change:.2f}%，汇率波动剧烈，注意回调"
+            impact = "bearish"
+        elif change > 0.8:
+            signal = "bullish_momentum"
+            strength = "medium"
+            reason = f"日涨幅{change:.2f}%，上涨动能较强"
+            impact = "bullish"
+        elif change < -1.5:
+            signal = "oversold"
+            strength = "strong"
+            reason = f"日跌幅{abs(change):.2f}%，汇率波动剧烈，可能反弹"
+            impact = "bullish"
+        elif change < -0.8:
+            signal = "bearish_momentum"
+            strength = "medium"
+            reason = f"日跌幅{abs(change):.2f}%，下跌趋势明显"
+            impact = "bearish"
+
+        if signal:
+            opportunities.append({
+                "symbol": symbol,
+                "name": name,
+                "price": price,
+                "change_24h": change,
+                "signal": signal,
+                "strength": strength,
+                "reason": reason,
+                "impact": impact,
+                "market": "Forex",
+                "timestamp": int(time.time())
+            })
+
+
 @global_market_bp.route("/opportunities", methods=["GET"])
 @login_required
 def trading_opportunities():
     """
-    Scan for trading opportunities based on technical indicators.
+    Scan for trading opportunities across Crypto, US Stocks, and Forex.
+    Cached for 1 hour. Pass ?force=true to skip cache.
     """
     try:
-        cached = _get_cached("trading_opportunities", 60)
-        if cached:
-            return jsonify({"code": 1, "msg": "success", "data": cached})
-        
+        force = request.args.get("force", "").lower() in ("true", "1")
+
+        if not force:
+            cached = _get_cached("trading_opportunities")
+            if cached:
+                return jsonify({"code": 1, "msg": "success", "data": cached})
+
         opportunities = []
-        
-        # Get crypto data
-        crypto_data = _get_cached("crypto_prices")
-        if not crypto_data:
-            crypto_data = _fetch_crypto_prices()
-        
-        # Analyze crypto for opportunities
-        for coin in crypto_data[:15]:
-            change = coin.get("change_24h", 0)
-            change_7d = coin.get("change_7d", 0)
-            symbol = coin.get("symbol", "")
-            name = coin.get("name", "")
-            price = coin.get("price", 0)
-            
-            signal = None
-            strength = "medium"
-            reason = ""
-            impact = "neutral"
-            
-            if change > 15:
-                signal = "overbought"
-                strength = "strong"
-                reason = f"24h涨幅{change:.1f}%，7日涨幅{change_7d:.1f}%，短期超买风险"
-                impact = "bearish"
-            elif change > 8:
-                signal = "bullish_momentum"
-                strength = "medium"
-                reason = f"24h涨幅{change:.1f}%，上涨动能强劲"
-                impact = "bullish"
-            elif change < -15:
-                signal = "oversold"
-                strength = "strong"
-                reason = f"24h跌幅{abs(change):.1f}%，可能超卖反弹"
-                impact = "bullish"
-            elif change < -8:
-                signal = "bearish_momentum"
-                strength = "medium"
-                reason = f"24h跌幅{abs(change):.1f}%，下跌趋势明显"
-                impact = "bearish"
-            
-            if signal:
-                opportunities.append({
-                    "symbol": symbol,
-                    "name": name,
-                    "price": price,
-                    "change_24h": change,
-                    "change_7d": change_7d,
-                    "signal": signal,
-                    "strength": strength,
-                    "reason": reason,
-                    "impact": impact,
-                    "market": "crypto",
-                    "timestamp": int(time.time())
-                })
-        
-        # Sort by absolute change
+
+        # 1) Crypto
+        _analyze_opportunities_crypto(opportunities)
+
+        # 2) US Stocks
+        _analyze_opportunities_stocks(opportunities)
+
+        # 3) Forex
+        _analyze_opportunities_forex(opportunities)
+
+        # Sort by absolute change descending
         opportunities.sort(key=lambda x: abs(x.get("change_24h", 0)), reverse=True)
-        
-        _set_cached("trading_opportunities", opportunities, 60)
-        
+
+        _set_cached("trading_opportunities", opportunities, 3600)
+
         return jsonify({"code": 1, "msg": "success", "data": opportunities})
-        
+
     except Exception as e:
         logger.error(f"trading_opportunities failed: {e}", exc_info=True)
         return jsonify({"code": 0, "msg": str(e), "data": None}), 500

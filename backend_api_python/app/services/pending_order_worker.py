@@ -838,19 +838,19 @@ class PendingOrderWorker:
         market_category = str(cfg.get("market_category") or "Crypto").strip()
 
         # Validate market category and exchange_id combination for live trading
-        # AShare and Futures do not support live trading
-        if market_category in ("AShare", "Futures"):
+        # Futures does not support live trading
+        if market_category in ("Futures",):
             self._mark_failed(order_id=order_id, error=f"live_trading_not_supported_for_{market_category.lower()}")
             _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {market_category} does not support live trading")
             _notify_live_best_effort(status="failed", error=f"live_trading_not_supported_for_{market_category.lower()}")
             return
 
-        # Validate IBKR only for USStock/HShare
+        # Validate IBKR only for USStock
         if exchange_id == "ibkr":
-            if market_category not in ("USStock", "HShare"):
-                self._mark_failed(order_id=order_id, error=f"ibkr_only_supports_usstock_hshare_got_{market_category.lower()}")
-                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} IBKR only supports USStock/HShare, got {market_category}")
-                _notify_live_best_effort(status="failed", error=f"ibkr_only_supports_usstock_hshare_got_{market_category.lower()}")
+            if market_category not in ("USStock",):
+                self._mark_failed(order_id=order_id, error=f"ibkr_only_supports_usstock_got_{market_category.lower()}")
+                _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} IBKR only supports USStock, got {market_category}")
+                _notify_live_best_effort(status="failed", error=f"ibkr_only_supports_usstock_got_{market_category.lower()}")
                 return
 
         # Validate MT5 only for Forex
@@ -884,7 +884,7 @@ class PendingOrderWorker:
             _notify_live_best_effort(status="failed", error=f"create_client_failed:{e}")
             return
 
-        # Check if this is an IBKR client (US/HK stocks)
+        # Check if this is an IBKR client (US stocks)
         global IBKRClient
         if IBKRClient is None:
             try:
@@ -961,7 +961,7 @@ class PendingOrderWorker:
 
         # Unified maker->market fallback settings
         # Priority: payload config > environment variable > default value
-        _default_order_mode = os.getenv("ORDER_MODE", "maker").strip().lower()
+        _default_order_mode = os.getenv("ORDER_MODE", "market").strip().lower()
         _default_maker_wait_sec = float(os.getenv("MAKER_WAIT_SEC", "10"))
         _default_maker_offset_bps = float(os.getenv("MAKER_OFFSET_BPS", "2"))
 
@@ -1925,7 +1925,7 @@ class PendingOrderWorker:
         _console_print,
     ) -> None:
         """
-        Execute order via Interactive Brokers for US/HK stocks.
+        Execute order via Interactive Brokers for US stocks.
 
         Simplified flow compared to crypto (no maker->market fallback):
         - Place market order directly
@@ -1957,7 +1957,7 @@ class PendingOrderWorker:
             _notify_live_best_effort(status="failed", error=f"ibkr_unsupported_signal:{signal_type}")
             return
 
-        # Get market type (USStock or HShare)
+        # Get market type (USStock)
         market_type = str(
             payload.get("market_type") or
             payload.get("market_category") or

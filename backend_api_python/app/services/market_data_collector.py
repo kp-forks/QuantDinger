@@ -11,7 +11,7 @@
 - 价格/K线: DataSourceFactory (已验证，与K线模块、自选列表一致)
 - 宏观数据: 复用 global_market.py (VIX, DXY, TNX, Fear&Greed等，带缓存)
 - 新闻: Finnhub API (结构化数据，无需深度阅读)
-- 基本面: Finnhub (美股) / akshare (A股) / 固定描述 (加密)
+- 基本面: Finnhub (美股) / 固定描述 (加密)
 """
 
 import time
@@ -59,12 +59,12 @@ class MarketDataCollector:
             except Exception as e:
                 logger.warning(f"Finnhub client init failed: {e}")
         
-        # akshare
+        # akshare (optional, for supplementary data)
         try:
             import akshare as ak
             self._ak = ak
         except ImportError:
-            logger.info("akshare not installed, A-share data will be limited")
+            logger.info("akshare not installed")
     
     def collect_all(
         self,
@@ -79,7 +79,7 @@ class MarketDataCollector:
         采集所有市场数据
         
         Args:
-            market: 市场类型 (USStock, Crypto, AShare, HShare, Forex, Futures)
+            market: 市场类型 (USStock, Crypto, Forex, Futures)
             symbol: 标的代码
             timeframe: K线周期
             include_macro: 是否包含宏观数据
@@ -124,7 +124,7 @@ class MarketDataCollector:
             }
             
             # 如果需要基本面，也并行获取
-            if market in ('USStock', 'AShare', 'HShare'):
+            if market == 'USStock':
                 core_futures[executor.submit(self._get_fundamental, market, symbol)] = "fundamental"
                 core_futures[executor.submit(self._get_company, market, symbol)] = "company"
             elif market == 'Crypto':
@@ -547,10 +547,6 @@ class MarketDataCollector:
         try:
             if market == 'USStock':
                 return self._get_us_fundamental(symbol)
-            elif market == 'AShare':
-                return self._get_ashare_fundamental(symbol)
-            elif market == 'HShare':
-                return self._get_hshare_fundamental(symbol)
         except Exception as e:
             logger.warning(f"Fundamental data fetch failed for {market}:{symbol}: {e}")
         return None
@@ -601,56 +597,6 @@ class MarketDataCollector:
                 logger.debug(f"yfinance fundamental failed for {symbol}: {e}")
         
         return result if result else None
-    
-    def _get_ashare_fundamental(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """A股基本面 - akshare"""
-        if not self._ak:
-            return None
-        
-        try:
-            # 个股指标
-            df = self._ak.stock_individual_info_em(symbol=symbol)
-            if df is not None and not df.empty:
-                result = {}
-                for _, row in df.iterrows():
-                    item = row.get('item', '')
-                    value = row.get('value', '')
-                    if '市盈率' in item:
-                        result['pe_ratio'] = value
-                    elif '市净率' in item:
-                        result['pb_ratio'] = value
-                    elif '总市值' in item:
-                        result['market_cap'] = value
-                    elif 'ROE' in item or '净资产收益率' in item:
-                        result['roe'] = value
-                    elif '每股收益' in item:
-                        result['eps'] = value
-                return result if result else None
-        except Exception as e:
-            logger.debug(f"akshare fundamental failed for {symbol}: {e}")
-        
-        return None
-    
-    def _get_hshare_fundamental(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """港股基本面 - yfinance"""
-        try:
-            # 港股在yfinance的格式: 0700.HK, 9988.HK
-            yf_symbol = f"{symbol}.HK"
-            ticker = yf.Ticker(yf_symbol)
-            info = ticker.info or {}
-            
-            return {
-                'pe_ratio': info.get('trailingPE'),
-                'pb_ratio': info.get('priceToBook'),
-                'market_cap': info.get('marketCap'),
-                'dividend_yield': info.get('dividendYield'),
-                '52w_high': info.get('fiftyTwoWeekHigh'),
-                '52w_low': info.get('fiftyTwoWeekLow'),
-            }
-        except Exception as e:
-            logger.debug(f"yfinance HShare fundamental failed for {symbol}: {e}")
-        
-        return None
     
     def _get_crypto_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """加密货币信息 (固定描述为主)"""
@@ -717,19 +663,6 @@ class MarketDataCollector:
                         'website': profile.get('weburl'),
                     }
             
-            elif market == 'AShare' and self._ak:
-                df = self._ak.stock_individual_info_em(symbol=symbol)
-                if df is not None and not df.empty:
-                    result = {}
-                    for _, row in df.iterrows():
-                        item = row.get('item', '')
-                        value = row.get('value', '')
-                        if '名称' in item or '简称' in item:
-                            result['name'] = value
-                        elif '行业' in item:
-                            result['industry'] = value
-                    return result if result else None
-                    
         except Exception as e:
             logger.debug(f"Company info fetch failed for {market}:{symbol}: {e}")
         
@@ -892,9 +825,8 @@ class MarketDataCollector:
         
         策略（按优先级）：
         1. 结构化API (Finnhub) - 美股首选
-        2. akshare 多源 - A股首选（东方财富/新浪/同花顺/雪球）
-        3. 搜索引擎 (Bocha/Tavily) - 补充搜索
-        4. 情绪分析 - Finnhub 社交媒体情绪
+        2. 搜索引擎 (Bocha/Tavily) - 补充搜索
+        3. 情绪分析 - Finnhub 社交媒体情绪
         """
         news_list = []
         sentiment = {}
@@ -912,7 +844,7 @@ class MarketDataCollector:
                 elif market == 'Crypto':
                     # 加密货币通用新闻
                     raw_news = self._finnhub_client.general_news('crypto', min_id=0)
-                elif market not in ('AShare', 'HShare'):
+                else:
                     # 其他市场通用新闻
                     raw_news = self._finnhub_client.general_news('general', min_id=0)
                 
@@ -942,17 +874,7 @@ class MarketDataCollector:
             except Exception as e:
                 logger.debug(f"Finnhub sentiment fetch failed: {e}")
         
-        # === 3) A股多源新闻 (akshare) ===
-        if market == 'AShare' and self._ak:
-            ashare_news = self._get_ashare_news_multi_source(symbol)
-            news_list.extend(ashare_news)
-        
-        # === 4) 港股新闻 (akshare) ===
-        if market == 'HShare' and self._ak:
-            hshare_news = self._get_hshare_news(symbol)
-            news_list.extend(hshare_news)
-        
-        # === 5) 搜索引擎补充 (如果新闻太少) ===
+        # === 3) 搜索引擎补充 (如果新闻太少) ===
         if len(news_list) < 5:
             search_news = self._get_news_from_search(market, symbol, company_name)
             news_list.extend(search_news)
@@ -973,108 +895,6 @@ class MarketDataCollector:
             "news": unique_news[:15],  # 最多15条
             "sentiment": sentiment,
         }
-    
-    def _get_ashare_news_multi_source(self, symbol: str) -> List[Dict[str, Any]]:
-        """
-        A股多源新闻获取
-        
-        来源（按优先级）：
-        1. 东方财富个股新闻 (stock_news_em)
-        2. 新浪财经滚动新闻 (stock_news_sina)
-        3. 同花顺个股新闻 (stock_news_ths)
-        4. 雪球热帖 (stock_xuqiu)
-        """
-        news_list = []
-        
-        # 1) 东方财富个股新闻
-        try:
-            df = self._ak.stock_news_em(symbol=symbol)
-            if df is not None and not df.empty:
-                for _, row in df.head(8).iterrows():
-                    news_list.append({
-                        "datetime": str(row.get('发布时间', ''))[:16],
-                        "headline": row.get('新闻标题', ''),
-                        "summary": row.get('新闻内容', '')[:200] if row.get('新闻内容') else '',
-                        "source": "东方财富",
-                        "url": row.get('新闻链接', ''),
-                        "sentiment": 'neutral',
-                    })
-                logger.debug(f"东方财富新闻: {len(df)} 条")
-        except Exception as e:
-            logger.debug(f"东方财富新闻获取失败: {e}")
-        
-        # 2) 新浪财经个股新闻
-        try:
-            # 注意：akshare 的新浪新闻接口可能需要股票名称而非代码
-            df = self._ak.stock_news_sina(symbol=symbol)
-            if df is not None and not df.empty:
-                for _, row in df.head(5).iterrows():
-                    title = row.get('title', '') or row.get('新闻标题', '')
-                    if title and title not in [n.get('headline') for n in news_list]:
-                        news_list.append({
-                            "datetime": str(row.get('time', row.get('发布时间', '')))[:16],
-                            "headline": title,
-                            "summary": row.get('content', row.get('新闻内容', ''))[:200] if row.get('content') or row.get('新闻内容') else '',
-                            "source": "新浪财经",
-                            "url": row.get('url', row.get('新闻链接', '')),
-                            "sentiment": 'neutral',
-                        })
-                logger.debug(f"新浪财经新闻: {len(df)} 条")
-        except Exception as e:
-            logger.debug(f"新浪财经新闻获取失败: {e}")
-        
-        # 3) 同花顺个股新闻
-        try:
-            df = self._ak.stock_news_ths(symbol=symbol)
-            if df is not None and not df.empty:
-                for _, row in df.head(5).iterrows():
-                    title = row.get('标题', '') or row.get('title', '')
-                    if title and title not in [n.get('headline') for n in news_list]:
-                        news_list.append({
-                            "datetime": str(row.get('发布时间', row.get('time', '')))[:16],
-                            "headline": title,
-                            "summary": row.get('内容', row.get('content', ''))[:200] if row.get('内容') or row.get('content') else '',
-                            "source": "同花顺",
-                            "url": row.get('链接', row.get('url', '')),
-                            "sentiment": 'neutral',
-                        })
-                logger.debug(f"同花顺新闻: {len(df)} 条")
-        except Exception as e:
-            logger.debug(f"同花顺新闻获取失败: {e}")
-        
-        # 4) 雪球热帖（社区讨论）
-        try:
-            df = self._ak.stock_xuqiu(symbol=symbol)
-            if df is not None and not df.empty:
-                for _, row in df.head(3).iterrows():
-                    title = row.get('标题', '') or row.get('title', '')
-                    if title and title not in [n.get('headline') for n in news_list]:
-                        news_list.append({
-                            "datetime": str(row.get('发布时间', row.get('time', '')))[:16],
-                            "headline": title,
-                            "summary": row.get('内容摘要', row.get('content', ''))[:200] if row.get('内容摘要') or row.get('content') else '',
-                            "source": "雪球",
-                            "url": row.get('链接', row.get('url', '')),
-                            "sentiment": 'neutral',
-                        })
-                logger.debug(f"雪球热帖: {len(df)} 条")
-        except Exception as e:
-            logger.debug(f"雪球热帖获取失败: {e}")
-        
-        return news_list
-    
-    def _get_hshare_news(self, symbol: str) -> List[Dict[str, Any]]:
-        """港股新闻获取"""
-        news_list = []
-        
-        try:
-            # 港股新闻 (如果 akshare 支持)
-            df = self._ak.stock_hk_spot_em()
-            # 港股一般没有专门的新闻接口，可以通过搜索补充
-        except Exception as e:
-            logger.debug(f"港股新闻获取失败: {e}")
-        
-        return news_list
     
     def _get_news_from_search(
         self, market: str, symbol: str, company_name: str = None

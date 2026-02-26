@@ -4,6 +4,184 @@ This document records version updates, new features, bug fixes, and database mig
 
 ---
 
+## V2.2.1 (2026-02-27)
+
+### 🚀 New Features
+
+#### Membership & Billing System
+- **Subscription Plans**: Monthly / Yearly / Lifetime tiers with configurable pricing and credit bundles
+- **Credit System**: Each plan includes credits; lifetime members receive recurring monthly credit bonuses
+- **Plan Management**: All plan prices, credits, and bonus amounts configurable via System Settings → Billing Configuration
+- **Membership Orders**: Order tracking with status management (paid / pending / failed / refunded)
+
+#### USDT On-Chain Payment (TRC20)
+- **HD Wallet Integration**: Per-order unique receiving address derived from xpub (BIP-32/44) — no private key on server
+- **Automatic Reconciliation**: Background polling via TronGrid API detects incoming payments and confirms orders
+- **Depth-Flexible xpub**: Supports both account-level (depth=3) and change-level (depth=4) xpub keys
+- **Configurable Expiry**: Order expiration time and confirmation delay configurable in System Settings
+- **Scan-to-Pay Modal**: Professional checkout UI with QR code, step indicator, real-time status, copy-to-clipboard, dark theme support
+
+#### VIP Free Indicators
+- **VIP Free Tag**: Admins can mark community indicators as "VIP Free" when publishing
+- **Zero-Credit Access**: VIP members can use VIP-free indicators without spending credits
+- **Visual Badge**: VIP Free indicators display a distinct badge in the Indicator Market
+
+#### AI Trading Opportunities Radar
+- **Multi-Market Scanning**: Auto-scans Crypto, US Stocks, and Forex markets every hour
+- **Rolling Carousel**: Opportunities displayed in a rotating carousel with market-specific styling
+- **Signal Classification**: BUY / SELL signals with percentage change and reason text
+- **Multi-Language**: All radar card content fully internationalized
+
+#### Simplified Strategy Creation
+- **Simple / Advanced Mode Toggle**: New users start with simplified mode, power users can switch to advanced
+- **Smart Defaults**: 15-minute K-line period, 5x leverage, market order, sensible TP/SL percentages
+- **Live Trading Disclaimer**: Mandatory risk acknowledgment checkbox before enabling live trading
+
+#### System Settings Simplification
+- **Streamlined Configuration**: Removed redundant config groups (server, strategy); consolidated into essential categories
+- **Market Order Default**: Changed default order mode to market order for reliable execution
+- **Billing Config i18n**: All billing configuration items fully multi-language supported
+
+#### Indicator Market Performance Tracking
+- **Live Performance Data**: Fixed aggregation to correctly parse backtest `result_json` and include live trade data
+- **Combined Metrics**: Backtest return, live PnL, and win rate now properly displayed on indicator cards
+
+### 🐛 Bug Fixes
+- Fixed "Live Performance" data showing all zeros in Indicator Market (incorrect SQL query referencing non-existent columns)
+- Fixed incorrect entry price display in Position Records (was falling back to current price)
+- Fixed inaccurate System Overview statistics for running strategies, total capital, and total PnL
+- Fixed multiple duplicate i18n key issues in `zh-CN.js` and `en-US.js` causing ESLint build failures
+- Fixed exposed i18n keys (`common.loading`, `common.noData`, `systemOverview.*`) not configured
+- Fixed HTML nesting issues in trading assistant strategy creation form
+- Fixed `ed25519-blake2b` build failure in Docker by adding temporary build dependencies
+- Fixed "Current depth (3) is not suitable for deriving address" error for xpub — now compatible with both depth 3 and depth 4
+
+### 🎨 UI/UX Improvements
+- Removed "Total Analyses" / "Accuracy Rate" row from homepage AI Analysis section
+- Removed "Search" and "Portfolio Checkup" features from AI Asset Analysis page
+- Professional USDT checkout modal with custom header, step indicator, dual-column layout
+- Dark theme and mobile responsive support for payment modal
+- Trading Opportunities Radar carousel with smooth scrolling animation
+
+### 📋 Database Migration
+
+**Run the following SQL on your PostgreSQL database before deploying V2.2.1:**
+
+```sql
+-- ============================================================
+-- QuantDinger V2.2.1 Database Migration
+-- Membership, USDT Payment, VIP Free Indicators
+-- ============================================================
+
+-- 1. User Table: Add membership columns
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'qd_users' AND column_name = 'vip_plan'
+    ) THEN
+        ALTER TABLE qd_users ADD COLUMN vip_plan VARCHAR(20) DEFAULT '';
+        RAISE NOTICE 'Added vip_plan column to qd_users';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'qd_users' AND column_name = 'vip_is_lifetime'
+    ) THEN
+        ALTER TABLE qd_users ADD COLUMN vip_is_lifetime BOOLEAN DEFAULT FALSE;
+        RAISE NOTICE 'Added vip_is_lifetime column to qd_users';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'qd_users' AND column_name = 'vip_monthly_credits_last_grant'
+    ) THEN
+        ALTER TABLE qd_users ADD COLUMN vip_monthly_credits_last_grant TIMESTAMP;
+        RAISE NOTICE 'Added vip_monthly_credits_last_grant column to qd_users';
+    END IF;
+END $$;
+
+-- 2. Indicator Codes: Add VIP Free flag
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'qd_indicator_codes' AND column_name = 'vip_free'
+    ) THEN
+        ALTER TABLE qd_indicator_codes ADD COLUMN vip_free BOOLEAN DEFAULT FALSE;
+        RAISE NOTICE 'Added vip_free column to qd_indicator_codes';
+    END IF;
+END $$;
+
+-- 3. Membership Orders table
+CREATE TABLE IF NOT EXISTS qd_membership_orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    plan VARCHAR(20) NOT NULL,
+    price_usd DECIMAL(10,2) DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'paid',
+    created_at TIMESTAMP DEFAULT NOW(),
+    paid_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_membership_orders_user_id ON qd_membership_orders(user_id);
+
+-- 4. USDT Orders table (on-chain payment tracking)
+CREATE TABLE IF NOT EXISTS qd_usdt_orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    plan VARCHAR(20) NOT NULL,
+    chain VARCHAR(20) NOT NULL DEFAULT 'TRC20',
+    amount_usdt DECIMAL(20,6) NOT NULL DEFAULT 0,
+    address_index INTEGER NOT NULL DEFAULT 0,
+    address VARCHAR(80) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    tx_hash VARCHAR(120) DEFAULT '',
+    paid_at TIMESTAMP,
+    confirmed_at TIMESTAMP,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_orders_address_unique ON qd_usdt_orders(chain, address);
+CREATE INDEX IF NOT EXISTS idx_usdt_orders_user_id ON qd_usdt_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_usdt_orders_status ON qd_usdt_orders(status);
+
+-- Migration Complete
+DO $$
+BEGIN
+    RAISE NOTICE '✅ QuantDinger V2.2.1 database migration completed!';
+END $$;
+```
+
+**Migration Notes:**
+- All statements use `IF NOT EXISTS` — safe to run multiple times
+- No existing data is modified or deleted
+- New `.env` variables required for USDT payment: `USDT_PAY_ENABLED`, `USDT_TRC20_XPUB`, `TRONGRID_API_KEY`
+- New `.env` variables for membership pricing: `MEMBERSHIP_MONTHLY_PRICE_USD`, `MEMBERSHIP_MONTHLY_CREDITS`, etc.
+- See `backend_api_python/env.example` for all new configuration options
+
+### 📝 Configuration Notes
+
+New environment variables (all optional, with defaults):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMBERSHIP_MONTHLY_PRICE_USD` | `19.9` | Monthly plan price |
+| `MEMBERSHIP_MONTHLY_CREDITS` | `500` | Credits included in monthly plan |
+| `MEMBERSHIP_YEARLY_PRICE_USD` | `169` | Yearly plan price |
+| `MEMBERSHIP_YEARLY_CREDITS` | `8000` | Credits included in yearly plan |
+| `MEMBERSHIP_LIFETIME_PRICE_USD` | `499` | Lifetime plan price |
+| `MEMBERSHIP_LIFETIME_CREDITS` | `30000` | Initial credits for lifetime plan |
+| `MEMBERSHIP_LIFETIME_MONTHLY_BONUS` | `500` | Monthly bonus credits for lifetime members |
+| `USDT_PAY_ENABLED` | `false` | Enable USDT TRC20 payment |
+| `USDT_TRC20_XPUB` | _(empty)_ | TRC20 HD wallet xpub for address derivation |
+| `TRONGRID_API_KEY` | _(empty)_ | TronGrid API key for on-chain monitoring |
+| `USDT_ORDER_EXPIRE_MINUTES` | `30` | USDT order expiration time |
+
+---
+
 ## V2.1.3 (2026-02-XX)
 
 ### 🚀 New Features
@@ -195,7 +373,7 @@ output = {
 - Fixed progress bar and timer not animating during AI analysis
 - Fixed missing i18n translations for various components
 - Fixed Tiingo API rate limit issues with caching
-- Fixed A-share and H-share data fetching with multiple fallback sources
+- Fixed data fetching with multiple fallback sources
 - Fixed watchlist price batch fetch timeout handling
 - Fixed heatmap multi-language support for commodities and forex
 - **Fixed AI analysis history not filtered by user** - All users were seeing the same history records; now each user only sees their own analysis history
@@ -418,6 +596,9 @@ END $$;
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| V2.2.1 | 2026-02-27 | Membership & Billing, USDT TRC20 payment, VIP free indicators, AI Trading Radar, simplified strategy creation |
+| V2.1.3 | 2026-02-XX | Cross-sectional strategy support |
+| V2.1.2 | 2026-02-01 | Indicator parameters, cross-indicator calling |
 | V2.1.1 | 2026-01-31 | AI Analysis overhaul, Global Market integration, Indicator Community enhancements |
 
 ---

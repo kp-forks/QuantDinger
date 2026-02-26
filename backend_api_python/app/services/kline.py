@@ -30,7 +30,7 @@ class KlineService:
         获取K线数据
         
         Args:
-            market: 市场类型 (Crypto, USStock, AShare, HShare, Forex, Futures)
+            market: 市场类型 (Crypto, USStock, Forex, Futures)
             symbol: 交易对/股票代码
             timeframe: 时间周期
             limit: 数据条数
@@ -76,7 +76,7 @@ class KlineService:
         获取实时价格（优先使用 ticker API，降级使用分钟 K 线）
         
         Args:
-            market: 市场类型 (Crypto, USStock, AShare, HShare, Forex, Futures)
+            market: 市场类型 (Crypto, USStock, Forex, Futures)
             symbol: 交易对/股票代码
             force_refresh: 是否强制刷新（跳过缓存）
             

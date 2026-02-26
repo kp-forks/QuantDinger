@@ -1,5 +1,5 @@
 <template>
-  <div class="ai-analysis-container" :class="{ 'theme-dark': isDarkTheme }" :style="{ '--primary-color': primaryColor }">
+  <div class="ai-analysis-container" :class="{ 'theme-dark': isDarkTheme, embedded: embedded }" :style="{ '--primary-color': primaryColor }">
     <!-- 全宽主内容区域 -->
     <div class="main-content-full">
       <!-- 顶部指数条 -->
@@ -462,6 +462,20 @@ import FastAnalysisReport from './components/FastAnalysisReport.vue'
 
 export default {
   name: 'Analysis',
+  props: {
+    embedded: {
+      type: Boolean,
+      default: false
+    },
+    presetSymbol: {
+      type: String,
+      default: ''
+    },
+    autoAnalyzeSignal: {
+      type: Number,
+      default: 0
+    }
+  },
   components: {
     FastAnalysisReport
   },
@@ -741,17 +755,15 @@ export default {
         'USStock': 'green',
         'Crypto': 'purple',
         'Forex': 'gold',
-        'Futures': 'cyan',
-        'AShare': 'blue',
-        'HShare': 'orange'
+        'Futures': 'cyan'
       }
       return colors[market] || 'default'
     },
     getCurrencySymbol (market) {
-      const dollarMarkets = ['USStock', 'Crypto', 'Forex', 'Futures']
-      return dollarMarkets.includes(market) ? '$' : '¥'
+      return '$'
     },
     async startFastAnalysis () {
+      if (this.analyzing) return
       if (!this.selectedSymbol) {
         this.$message.warning(this.$t('dashboard.analysis.message.selectSymbol'))
         return
@@ -1201,9 +1213,7 @@ export default {
             { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
             { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
             { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
-            { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' },
-            { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
-            { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' }
+            { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
           ]
         }
       } catch (error) {
@@ -1211,9 +1221,7 @@ export default {
           { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
           { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
           { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
-          { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' },
-          { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
-          { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' }
+          { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
         ]
       }
 
@@ -1223,6 +1231,22 @@ export default {
     }
   },
   watch: {
+    presetSymbol (newVal) {
+      if (newVal && newVal !== this.selectedSymbol) {
+        this.selectedSymbol = newVal
+        this.analysisResult = null
+        this.analysisError = null
+      }
+    },
+    autoAnalyzeSignal (newVal) {
+      if (!newVal) return
+      if (this.presetSymbol && this.presetSymbol !== this.selectedSymbol) {
+        this.selectedSymbol = this.presetSymbol
+      }
+      this.$nextTick(() => {
+        this.startFastAnalysis()
+      })
+    },
     showAddStockModal (newVal) {
       if (newVal) {
         if (this.marketTypes.length > 0 && !this.selectedMarketTab) {
@@ -1254,6 +1278,17 @@ export default {
   overflow: hidden;
   width: 100%;
   box-sizing: border-box;
+}
+
+.ai-analysis-container.embedded {
+  height: auto;
+  min-height: 700px;
+  background: transparent;
+}
+
+.ai-analysis-container.embedded .main-content-full {
+  box-shadow: none;
+  border-radius: 0;
 }
 
 // 全宽主内容

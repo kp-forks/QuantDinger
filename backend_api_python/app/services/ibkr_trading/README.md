@@ -1,6 +1,6 @@
 # Interactive Brokers Trading Module
 
-Supports US stocks and Hong Kong stocks trading via TWS or IB Gateway.
+Supports US stocks trading via TWS or IB Gateway.
 
 ## Installation
 
@@ -76,10 +76,10 @@ curl -X POST http://localhost:5000/api/ibkr/order \
   -H "Content-Type: application/json" \
   -d '{"symbol": "AAPL", "side": "buy", "quantity": 10, "marketType": "USStock"}'
 
-# Limit order: sell 100 shares of Tencent
+# Limit order: sell 100 shares of MSFT
 curl -X POST http://localhost:5000/api/ibkr/order \
   -H "Content-Type: application/json" \
-  -d '{"symbol": "0700.HK", "side": "sell", "quantity": 100, "marketType": "HShare", "orderType": "limit", "price": 300}'
+  -d '{"symbol": "MSFT", "side": "sell", "quantity": 100, "marketType": "USStock", "orderType": "limit", "price": 400}'
 ```
 
 ### Get Positions
@@ -93,7 +93,6 @@ curl http://localhost:5000/api/ibkr/positions
 | Market | Format | Examples |
 |--------|--------|----------|
 | US Stock | Ticker symbol | `AAPL`, `TSLA`, `GOOGL` |
-| HK Stock | `XXXX.HK` or digits | `0700.HK`, `00700`, `700` |
 
 ## Important Notes
 

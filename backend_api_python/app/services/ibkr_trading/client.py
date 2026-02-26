@@ -180,7 +180,7 @@ class IBKRClient:
         
         Args:
             symbol: Symbol code
-            market_type: Market type (USStock, HShare)
+            market_type: Market type (USStock)
         """
         _ensure_ib_insync()
         
@@ -219,7 +219,7 @@ class IBKRClient:
             symbol: Symbol code (e.g., AAPL, 0700.HK)
             side: Direction ("buy" or "sell")
             quantity: Number of shares
-            market_type: Market type ("USStock" or "HShare")
+            market_type: Market type ("USStock")
             
         Returns:
             OrderResult

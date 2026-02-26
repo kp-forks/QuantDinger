@@ -3,7 +3,7 @@ Translate a strategy signal into a direct-exchange order call.
 
 Supports:
 - Crypto exchanges: Binance, OKX, Bitget, Bybit, Coinbase, Kraken, KuCoin, Gate, Bitfinex
-- Traditional brokers: Interactive Brokers (IBKR) for US/HK stocks
+- Traditional brokers: Interactive Brokers (IBKR) for US stocks
 - Forex brokers: MetaTrader 5 (MT5)
 """
 
@@ -203,7 +203,7 @@ def _place_ibkr_order(
     exchange_config: Optional[Dict[str, Any]] = None,
 ) -> LiveOrderResult:
     """
-    Place order via IBKR for US/HK stocks.
+    Place order via IBKR for US stocks.
 
     Signal mapping for stocks (no short selling in this implementation):
     - open_long / add_long -> BUY

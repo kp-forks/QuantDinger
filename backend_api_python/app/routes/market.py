@@ -83,7 +83,7 @@ def get_public_config():
 @market_bp.route('/types', methods=['GET'])
 def get_market_types():
     """Return supported market types for the add-watchlist modal."""
-    desired_order = ['USStock', 'Crypto', 'Forex', 'Futures', 'HShare', 'AShare']
+    desired_order = ['USStock', 'Crypto', 'Forex', 'Futures']
     order_rank = {v: i for i, v in enumerate(desired_order)}
 
     def _normalize_item(x):
@@ -495,22 +495,11 @@ def get_stock_name():
         stock_name = symbol  # 默认使用代码
         
         try:
-            if market in ['USStock', 'AShare', 'HShare']:
+            if market == 'USStock':
                 # 对于股票，尝试获取基本信息
                 import yfinance as yf
                 
-                # 转换symbol格式
-                if market == 'USStock':
-                    yf_symbol = symbol
-                elif market == 'AShare':
-                    yf_symbol = symbol + '.SS' if symbol.startswith('6') else symbol + '.SZ'
-                elif market == 'HShare':
-                    # 港股需要补齐4位数字并添加.HK
-                    hk_code = symbol.zfill(4)
-                    yf_symbol = hk_code + '.HK'
-                else:
-                    yf_symbol = symbol
-                
+                yf_symbol = symbol
                 ticker = yf.Ticker(yf_symbol)
                 info = ticker.info
                 

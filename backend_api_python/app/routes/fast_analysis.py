@@ -23,7 +23,7 @@ def analyze():
     
     POST /api/fast-analysis/analyze
     Body: {
-        "market": "Crypto" | "USStock" | "AShare" | "Forex" | ...,
+        "market": "Crypto" | "USStock" | "Forex" | ...,
         "symbol": "BTC/USDT" | "AAPL" | ...,
         "language": "zh-CN" | "en-US" (optional),
         "model": "openai/gpt-4o" (optional),

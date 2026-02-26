@@ -61,10 +61,11 @@ export function getMarketSentiment () {
 /**
  * Get trading opportunities based on technical analysis
  */
-export function getTradingOpportunities () {
+export function getTradingOpportunities (params) {
   return request({
     url: `${BASE_URL}/opportunities`,
-    method: 'get'
+    method: 'get',
+    params
   })
 }
 

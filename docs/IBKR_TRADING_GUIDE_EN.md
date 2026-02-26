@@ -1,10 +1,10 @@
 # Interactive Brokers (IBKR) Trading Guide
 
-QuantDinger supports US stocks and Hong Kong stocks live trading via Interactive Brokers TWS or IB Gateway.
+QuantDinger supports US stocks live trading via Interactive Brokers TWS or IB Gateway.
 
 ## Overview
 
-This feature enables automated trading execution for US and HK stock markets through your Interactive Brokers account. Once configured, your trading strategies can automatically place orders via the IBKR API.
+This feature enables automated trading execution for US stock markets through your Interactive Brokers account. Once configured, your trading strategies can automatically place orders via the IBKR API.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ pip install ib_insync
 
 ## Strategy Configuration
 
-When creating a strategy for US or HK stocks, configure the IBKR connection in the "Live Trading" section:
+When creating a strategy for US stocks, configure the IBKR connection in the "Live Trading" section:
 
 | Field | Description | Example |
 |-------|-------------|---------|
@@ -54,7 +54,6 @@ When creating a strategy for US or HK stocks, configure the IBKR connection in t
 | Market | Format | Examples |
 |--------|--------|----------|
 | US Stock | Ticker symbol | `AAPL`, `TSLA`, `GOOGL`, `MSFT` |
-| HK Stock | `XXXX.HK` or digits | `0700.HK`, `00700`, `700` |
 
 ## Trading Flow
 
@@ -126,11 +125,6 @@ curl -X POST http://localhost:5000/api/ibkr/connect \
 curl -X POST http://localhost:5000/api/ibkr/order \
   -H "Content-Type: application/json" \
   -d '{"symbol": "AAPL", "side": "buy", "quantity": 10, "marketType": "USStock"}'
-
-# Limit order: sell 100 shares of Tencent
-curl -X POST http://localhost:5000/api/ibkr/order \
-  -H "Content-Type: application/json" \
-  -d '{"symbol": "0700.HK", "side": "sell", "quantity": 100, "marketType": "HShare", "orderType": "limit", "price": 300}'
 ```
 
 ## Important Notes

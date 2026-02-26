@@ -3,7 +3,7 @@ Factory for direct exchange clients.
 
 Supports:
 - Crypto exchanges: Binance, OKX, Bitget, Bybit, Coinbase, Kraken, KuCoin, Gate, Bitfinex
-- Traditional brokers: Interactive Brokers (IBKR) for US/HK stocks
+- Traditional brokers: Interactive Brokers (IBKR) for US stocks
 - Forex brokers: MetaTrader 5 (MT5)
 """
 
@@ -131,7 +131,7 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
             market_type=mt,
         )
 
-    # Traditional brokers (IBKR for US/HK stocks only)
+    # Traditional brokers (IBKR for US stocks only)
     if exchange_id == "ibkr":
         # Note: Market category validation should be done at the caller level
         # This factory only creates clients based on exchange_id
@@ -148,7 +148,7 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
 
 def create_ibkr_client(exchange_config: Dict[str, Any]):
     """
-    Create IBKR client for US/HK stock trading.
+    Create IBKR client for US stock trading.
 
     exchange_config should contain:
     - ibkr_host: TWS/Gateway host (default: 127.0.0.1)

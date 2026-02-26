@@ -4,7 +4,7 @@ Flask-based backend for QuantDinger: market data, indicators, AI analysis, backt
 
 ## What you get
 
-- **Multi-market data layer**: factory-based providers (crypto / US stocks / CN&HK stocks / futures, etc.)
+- **Multi-market data layer**: factory-based providers (crypto / US stocks / forex / futures, etc.)
 - **Indicators + backtesting**: persisted runs/history in PostgreSQL
 - **AI multi-agent analysis**: optional web search + OpenRouter LLM integration
 - **Strategy runtime**: thread-based executor, with optional auto-restore on startup

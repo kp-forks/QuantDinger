@@ -76,6 +76,8 @@ def _row_to_indicator(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
         "publish_to_community": row.get("publish_to_community") if row.get("publish_to_community") is not None else 0,
         "pricing_type": row.get("pricing_type") or "free",
         "price": row.get("price") if row.get("price") is not None else 0,
+        # VIP-free indicator flag (community publishing)
+        "vip_free": 1 if (row.get("vip_free") or 0) else 0,
         # Local mode: encryption is not supported; keep field for frontend compatibility (always 0).
         "is_encrypted": 0,
         "preview_image": row.get("preview_image") or "",
@@ -131,12 +133,17 @@ def get_indicators():
 
         with get_db_connection() as db:
             cur = db.cursor()
+            # Best-effort schema upgrade for VIP-free indicators
+            try:
+                cur.execute("ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS vip_free BOOLEAN DEFAULT FALSE")
+            except Exception:
+                pass
             # Get user's own indicators (both purchased and custom).
             cur.execute(
                 """
                 SELECT
                   id, user_id, is_buy, end_time, name, code, description,
-                  publish_to_community, pricing_type, price, is_encrypted, preview_image,
+                  publish_to_community, pricing_type, price, is_encrypted, preview_image, vip_free,
                   createtime, updatetime, created_at, updated_at
                 FROM qd_indicator_codes
                 WHERE user_id = ?
@@ -178,6 +185,7 @@ def save_indicator():
         description = (data.get("description") or "").strip()
         publish_to_community = 1 if data.get("publishToCommunity") or data.get("publish_to_community") else 0
         pricing_type = (data.get("pricingType") or data.get("pricing_type") or "free").strip() or "free"
+        vip_free = 1 if (data.get("vipFree") or data.get("vip_free")) else 0
         try:
             price = float(data.get("price") or 0)
         except Exception:
@@ -206,6 +214,11 @@ def save_indicator():
         
         with get_db_connection() as db:
             cur = db.cursor()
+            # Best-effort schema upgrade for VIP-free indicators
+            try:
+                cur.execute("ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS vip_free BOOLEAN DEFAULT FALSE")
+            except Exception:
+                pass
             if indicator_id and indicator_id > 0:
                 # 检查是否从未发布改为发布，需要设置审核状态
                 if publish_to_community:
@@ -224,11 +237,12 @@ def save_indicator():
                             UPDATE qd_indicator_codes
                             SET name = ?, code = ?, description = ?,
                                 publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
+                                vip_free = ?,
                                 review_status = ?, review_note = '', reviewed_at = NOW(), reviewed_by = ?,
                                 updatetime = ?, updated_at = NOW()
                             WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
                             """,
-                            (name, code, description, publish_to_community, pricing_type, price, preview_image, 
+                            (name, code, description, publish_to_community, pricing_type, price, preview_image, vip_free,
                              new_review_status, user_id if is_admin else None, now, indicator_id, user_id),
                         )
                     else:
@@ -238,10 +252,11 @@ def save_indicator():
                             UPDATE qd_indicator_codes
                             SET name = ?, code = ?, description = ?,
                                 publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
+                                vip_free = ?,
                                 updatetime = ?, updated_at = NOW()
                             WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
                             """,
-                            (name, code, description, publish_to_community, pricing_type, price, preview_image, now, indicator_id, user_id),
+                            (name, code, description, publish_to_community, pricing_type, price, preview_image, vip_free, now, indicator_id, user_id),
                         )
                 else:
                     # 取消发布，清除审核状态
@@ -250,6 +265,7 @@ def save_indicator():
                         UPDATE qd_indicator_codes
                         SET name = ?, code = ?, description = ?,
                             publish_to_community = ?, pricing_type = ?, price = ?, preview_image = ?,
+                            vip_free = 0,
                             review_status = NULL, review_note = '', reviewed_at = NULL, reviewed_by = NULL,
                             updatetime = ?, updated_at = NOW()
                         WHERE id = ? AND user_id = ? AND (is_buy IS NULL OR is_buy = 0)
@@ -265,11 +281,11 @@ def save_indicator():
                     """
                     INSERT INTO qd_indicator_codes
                       (user_id, is_buy, end_time, name, code, description,
-                       publish_to_community, pricing_type, price, preview_image, review_status,
+                       publish_to_community, pricing_type, price, preview_image, vip_free, review_status,
                        createtime, updatetime, created_at, updated_at)
-                    VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    VALUES (?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                     """,
-                    (user_id, name, code, description, publish_to_community, pricing_type, price, preview_image, review_status, now, now),
+                    (user_id, name, code, description, publish_to_community, pricing_type, price, preview_image, vip_free, review_status, now, now),
                 )
                 indicator_id = int(cur.lastrowid or 0)
             db.commit()

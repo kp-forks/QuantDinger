@@ -161,24 +161,12 @@ class CircuitBreaker:
 # 全局熔断器实例
 # ============================================
 
-# A股数据源熔断器（标准策略）
-_ashare_circuit_breaker = CircuitBreaker(
-    failure_threshold=3,      # 连续失败3次熔断
-    cooldown_seconds=300.0,   # 冷却5分钟
-    half_open_max_calls=1
-)
-
 # 实时行情熔断器（更严格的策略）
 _realtime_circuit_breaker = CircuitBreaker(
     failure_threshold=2,      # 连续失败2次熔断
     cooldown_seconds=180.0,   # 冷却3分钟
     half_open_max_calls=1
 )
-
-
-def get_ashare_circuit_breaker() -> CircuitBreaker:
-    """获取A股数据源熔断器"""
-    return _ashare_circuit_breaker
 
 
 def get_realtime_circuit_breaker() -> CircuitBreaker:

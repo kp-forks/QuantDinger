@@ -369,10 +369,23 @@
       :wrapClassName="isMobile ? 'mobile-modal' : ''"
       :bodyStyle="{ maxHeight: '70vh', overflowY: 'auto' }">
       <a-spin :spinning="loadingIndicators">
-        <a-steps :current="currentStep" class="steps-container">
-          <a-step :title="$t('trading-assistant.form.step1')" />
-          <a-step :title="$t('trading-assistant.form.step2Params')" />
-          <a-step :title="$t('trading-assistant.form.step3Signal')" />
+        <!-- Simple / Advanced mode toggle -->
+        <div class="creation-mode-toggle" v-if="!editingStrategy">
+          <a-radio-group v-model="creationMode" size="small" button-style="solid">
+            <a-radio-button value="simple">
+              <a-icon type="rocket" /> {{ $t('trading-assistant.form.simpleMode') }}
+            </a-radio-button>
+            <a-radio-button value="advanced">
+              <a-icon type="setting" /> {{ $t('trading-assistant.form.advancedMode') }}
+            </a-radio-button>
+          </a-radio-group>
+          <span class="mode-hint">{{ isSimpleMode ? $t('trading-assistant.form.simpleModeHint') : $t('trading-assistant.form.advancedModeHint') }}</span>
+        </div>
+
+        <a-steps :current="displayCurrentStep" class="steps-container">
+          <a-step :title="isSimpleMode && !editingStrategy ? $t('trading-assistant.form.simpleStep1') : $t('trading-assistant.form.step1')" />
+          <a-step v-if="isAdvancedMode || editingStrategy" :title="$t('trading-assistant.form.step2Params')" />
+          <a-step :title="isSimpleMode && !editingStrategy ? $t('trading-assistant.form.simpleStep2') : $t('trading-assistant.form.step3Signal')" />
         </a-steps>
 
         <div class="form-container">
@@ -467,18 +480,43 @@
                     :placeholder="$t('trading-assistant.placeholders.inputStrategyName')" />
                 </a-form-item>
 
-                <!-- 策略类型选择 -->
-                <a-form-item :label="$t('trading-assistant.form.strategyType')">
-                  <a-radio-group
-                    v-decorator="['cs_strategy_type', { initialValue: 'single' }]"
-                    @change="handleStrategyTypeChange">
-                    <a-radio value="single">{{ $t('trading-assistant.form.strategyTypeSingle') }}</a-radio>
-                    <a-radio value="cross_sectional">{{ $t('trading-assistant.form.strategyTypeCrossSectional') }}</a-radio>
-                  </a-radio-group>
-                  <div class="form-item-hint">
-                    {{ $t('trading-assistant.form.strategyTypeHint') }}
-                  </div>
-                </a-form-item>
+                <!-- ===== Simple mode: show defaults summary + toggle ===== -->
+                <div v-if="isSimpleMode && !editingStrategy" class="simple-defaults-summary">
+                  <a-alert type="info" show-icon style="margin-bottom: 12px;">
+                    <template #message>
+                      <span>{{ $t('trading-assistant.form.simpleDefaultsHint') }}</span>
+                    </template>
+                    <template #description>
+                      <span>
+                        {{ $t('trading-assistant.form.klinePeriod') }}: <b>15m</b> ·
+                        {{ $t('trading-assistant.form.leverage') }}: <b>5x</b> ·
+                        {{ $t('trading-assistant.form.marketType') }}: <b>{{ $t('trading-assistant.form.marketTypeFutures') }}</b> ·
+                        {{ $t('dashboard.indicator.backtest.field.stopLossPct') }}: <b>3%</b> ·
+                        {{ $t('dashboard.indicator.backtest.field.takeProfitPct') }}: <b>6%</b>
+                      </span>
+                    </template>
+                  </a-alert>
+                  <a-button type="link" size="small" @click="showAdvancedSettings = !showAdvancedSettings" style="padding: 0; margin-bottom: 12px;">
+                    <a-icon :type="showAdvancedSettings ? 'up' : 'down'" />
+                    {{ showAdvancedSettings ? $t('trading-assistant.form.hideAdvancedSettings') : $t('trading-assistant.form.showAdvancedSettings') }}
+                  </a-button>
+                </div>
+
+                <!-- ===== Strategy type: only show in advanced mode ===== -->
+                <div v-show="isAdvancedMode || editingStrategy || showAdvancedSettings">
+                  <!-- 策略类型选择 -->
+                  <a-form-item :label="$t('trading-assistant.form.strategyType')">
+                    <a-radio-group
+                      v-decorator="['cs_strategy_type', { initialValue: 'single' }]"
+                      @change="handleStrategyTypeChange">
+                      <a-radio value="single">{{ $t('trading-assistant.form.strategyTypeSingle') }}</a-radio>
+                      <a-radio value="cross_sectional">{{ $t('trading-assistant.form.strategyTypeCrossSectional') }}</a-radio>
+                    </a-radio-group>
+                    <div class="form-item-hint">
+                      {{ $t('trading-assistant.form.strategyTypeHint') }}
+                    </div>
+                  </a-form-item>
+                </div>
 
                 <!-- 截面策略配置 -->
                 <template v-if="form.getFieldValue('cs_strategy_type') === 'cross_sectional'">
@@ -633,94 +671,100 @@
                   </div>
                 </a-form-item>
 
-                <a-row :gutter="16">
-                  <a-col :xs="24" :sm="24" :md="12" :lg="12">
-                    <a-form-item :label="$t('trading-assistant.form.initialCapital')">
-                      <a-input-number
-                        v-decorator="['initial_capital', { rules: [{ required: true, message: $t('trading-assistant.validation.initialCapitalRequired') }], initialValue: 1000 }]"
-                        :min="10"
-                        :step="100"
-                        :precision="2"
-                        style="width: 100%" />
-                    </a-form-item>
-                  </a-col>
-                  <a-col :xs="24" :sm="24" :md="12" :lg="12">
-                    <a-form-item :label="$t('trading-assistant.form.marketType')">
-                      <a-radio-group
-                        v-decorator="['market_type', { initialValue: 'swap' }]"
-                        @change="handleMarketTypeChange">
-                        <a-radio value="swap">{{ $t('trading-assistant.form.marketTypeFutures') }}</a-radio>
-                        <a-radio value="spot">{{ $t('trading-assistant.form.marketTypeSpot') }}</a-radio>
-                      </a-radio-group>
-                      <div class="form-item-hint">
-                        {{ $t('trading-assistant.form.marketTypeHint') }}
-                      </div>
-                    </a-form-item>
-                  </a-col>
-                </a-row>
+                <!-- ===== Advanced trading params (capital/leverage/direction/timeframe etc.) ===== -->
+                <div v-show="isAdvancedMode || editingStrategy || showAdvancedSettings">
 
-                <a-row :gutter="16">
-                  <a-col :xs="24" :sm="24" :md="12" :lg="12">
-                    <a-form-item :label="`${$t('trading-assistant.form.leverage')} (x)`">
-                      <a-input-number
-                        v-decorator="['leverage', { initialValue: 1, rules: [{ required: true, message: $t('trading-assistant.validation.leverageRequired') }] }]"
-                        :min="1"
-                        :max="form.getFieldValue('market_type') === 'spot' ? 1 : 125"
-                        :step="1"
-                        style="width: 100%"
-                        :disabled="form.getFieldValue('market_type') === 'spot'" />
-                      <div class="form-item-hint">
-                        <span v-if="form.getFieldValue('market_type') === 'spot'">
-                          {{ $t('trading-assistant.form.spotLeverageFixed') }}
-                        </span>
-                        <span v-else>
-                          {{ $t('trading-assistant.form.leverageHint') }}
-                        </span>
-                      </div>
-                    </a-form-item>
-                  </a-col>
-                  <a-col :xs="24" :sm="24" :md="12" :lg="12">
-                    <a-form-item :label="$t('trading-assistant.form.tradeDirection')">
-                      <a-radio-group
-                        v-decorator="['trade_direction', { initialValue: 'long' }]"
-                        :disabled="form.getFieldValue('market_type') === 'spot'">
-                        <a-radio value="long">{{ $t('trading-assistant.form.tradeDirectionLong') }}</a-radio>
-                        <a-radio value="short" :disabled="form.getFieldValue('market_type') === 'spot'">
-                          {{ $t('trading-assistant.form.tradeDirectionShort') }}
-                        </a-radio>
-                        <a-radio value="both" :disabled="form.getFieldValue('market_type') === 'spot'">
-                          {{ $t('trading-assistant.form.tradeDirectionBoth') }}
-                        </a-radio>
-                      </a-radio-group>
-                      <div
-                        v-if="form.getFieldValue('market_type') === 'spot'"
-                        class="form-item-hint"
-                        style="color: #ff9800;">
-                        {{ $t('trading-assistant.form.spotOnlyLongHint') }}
-                      </div>
-                    </a-form-item>
-                  </a-col>
-                </a-row>
+                  <a-row :gutter="16">
+                    <a-col :xs="24" :sm="24" :md="12" :lg="12">
+                      <a-form-item :label="$t('trading-assistant.form.initialCapital')">
+                        <a-input-number
+                          v-decorator="['initial_capital', { rules: [{ required: true, message: $t('trading-assistant.validation.initialCapitalRequired') }], initialValue: 1000 }]"
+                          :min="10"
+                          :step="100"
+                          :precision="2"
+                          style="width: 100%" />
+                      </a-form-item>
+                    </a-col>
+                    <a-col :xs="24" :sm="24" :md="12" :lg="12">
+                      <a-form-item :label="$t('trading-assistant.form.marketType')">
+                        <a-radio-group
+                          v-decorator="['market_type', { initialValue: 'swap' }]"
+                          @change="handleMarketTypeChange">
+                          <a-radio value="swap">{{ $t('trading-assistant.form.marketTypeFutures') }}</a-radio>
+                          <a-radio value="spot">{{ $t('trading-assistant.form.marketTypeSpot') }}</a-radio>
+                        </a-radio-group>
+                        <div class="form-item-hint">
+                          {{ $t('trading-assistant.form.marketTypeHint') }}
+                        </div>
+                      </a-form-item>
+                    </a-col>
+                  </a-row>
 
-                <a-row :gutter="16">
-                  <a-col :xs="24" :sm="24" :md="12" :lg="12">
-                    <a-form-item :label="$t('trading-assistant.form.klinePeriod')">
-                      <a-select
-                        v-decorator="['timeframe', { initialValue: '1H', rules: [{ required: true }] }]"
-                        :placeholder="$t('trading-assistant.placeholders.selectKlinePeriod')"
-                        :getPopupContainer="(triggerNode) => triggerNode.parentNode">
-                        <a-select-option value="1m">{{ $t('trading-assistant.form.timeframe1m') }}</a-select-option>
-                        <a-select-option value="5m">{{ $t('trading-assistant.form.timeframe5m') }}</a-select-option>
-                        <a-select-option value="15m">{{ $t('trading-assistant.form.timeframe15m') }}</a-select-option>
-                        <a-select-option value="30m">{{ $t('trading-assistant.form.timeframe30m') }}</a-select-option>
-                        <a-select-option value="1H">{{ $t('trading-assistant.form.timeframe1H') }}</a-select-option>
-                        <a-select-option value="4H">{{ $t('trading-assistant.form.timeframe4H') }}</a-select-option>
-                        <a-select-option value="1D">{{ $t('trading-assistant.form.timeframe1D') }}</a-select-option>
-                      </a-select>
-                    </a-form-item>
-                  </a-col>
-                  <a-col :xs="24" :sm="24" :md="12" :lg="12"></a-col>
-                </a-row>
+                  <a-row :gutter="16">
+                    <a-col :xs="24" :sm="24" :md="12" :lg="12">
+                      <a-form-item :label="`${$t('trading-assistant.form.leverage')} (x)`">
+                        <a-input-number
+                          v-decorator="['leverage', { initialValue: 5, rules: [{ required: true, message: $t('trading-assistant.validation.leverageRequired') }] }]"
+                          :min="1"
+                          :max="form.getFieldValue('market_type') === 'spot' ? 1 : 125"
+                          :step="1"
+                          style="width: 100%"
+                          :disabled="form.getFieldValue('market_type') === 'spot'" />
+                        <div class="form-item-hint">
+                          <span v-if="form.getFieldValue('market_type') === 'spot'">
+                            {{ $t('trading-assistant.form.spotLeverageFixed') }}
+                          </span>
+                          <span v-else>
+                            {{ $t('trading-assistant.form.leverageHint') }}
+                          </span>
+                        </div>
+                      </a-form-item>
+                    </a-col>
+                    <a-col :xs="24" :sm="24" :md="12" :lg="12">
+                      <a-form-item :label="$t('trading-assistant.form.tradeDirection')">
+                        <a-radio-group
+                          v-decorator="['trade_direction', { initialValue: 'long' }]"
+                          :disabled="form.getFieldValue('market_type') === 'spot'">
+                          <a-radio value="long">{{ $t('trading-assistant.form.tradeDirectionLong') }}</a-radio>
+                          <a-radio value="short" :disabled="form.getFieldValue('market_type') === 'spot'">
+                            {{ $t('trading-assistant.form.tradeDirectionShort') }}
+                          </a-radio>
+                          <a-radio value="both" :disabled="form.getFieldValue('market_type') === 'spot'">
+                            {{ $t('trading-assistant.form.tradeDirectionBoth') }}
+                          </a-radio>
+                        </a-radio-group>
+                        <div
+                          v-if="form.getFieldValue('market_type') === 'spot'"
+                          class="form-item-hint"
+                          style="color: #ff9800;">
+                          {{ $t('trading-assistant.form.spotOnlyLongHint') }}
+                        </div>
+                      </a-form-item>
+                    </a-col>
+                  </a-row>
+
+                  <a-row :gutter="16">
+                    <a-col :xs="24" :sm="24" :md="12" :lg="12">
+                      <a-form-item :label="$t('trading-assistant.form.klinePeriod')">
+                        <a-select
+                          v-decorator="['timeframe', { initialValue: '15m', rules: [{ required: true }] }]"
+                          :placeholder="$t('trading-assistant.placeholders.selectKlinePeriod')"
+                          :getPopupContainer="(triggerNode) => triggerNode.parentNode">
+                          <a-select-option value="1m">{{ $t('trading-assistant.form.timeframe1m') }}</a-select-option>
+                          <a-select-option value="5m">{{ $t('trading-assistant.form.timeframe5m') }}</a-select-option>
+                          <a-select-option value="15m">{{ $t('trading-assistant.form.timeframe15m') }}</a-select-option>
+                          <a-select-option value="30m">{{ $t('trading-assistant.form.timeframe30m') }}</a-select-option>
+                          <a-select-option value="1H">{{ $t('trading-assistant.form.timeframe1H') }}</a-select-option>
+                          <a-select-option value="4H">{{ $t('trading-assistant.form.timeframe4H') }}</a-select-option>
+                          <a-select-option value="1D">{{ $t('trading-assistant.form.timeframe1D') }}</a-select-option>
+                        </a-select>
+                      </a-form-item>
+                    </a-col>
+                    <a-col :xs="24" :sm="24" :md="12" :lg="12"></a-col>
+                  </a-row>
+
+                </div><!-- / v-show advanced trading params wrapper -->
+
               </a-form>
             </div>
 
@@ -728,7 +772,7 @@
           </div>
 
           <!-- Step 2: params (backtest-like / trading params) -->
-          <div v-show="currentStep === 1" class="step-content">
+          <div v-show="currentStep === 1 || (isSimpleMode && currentStep === 0 && showAdvancedSettings)" class="step-content">
             <!-- 指标策略：策略参数 -->
             <div v-if="strategyType === 'indicator'">
               <a-form :form="form" layout="vertical">
@@ -739,7 +783,7 @@
                       <a-col :span="12">
                         <a-form-item :label="$t('dashboard.indicator.backtest.field.stopLossPct')">
                           <a-input-number
-                            v-decorator="['stop_loss_pct', { initialValue: 0 }]"
+                            v-decorator="['stop_loss_pct', { initialValue: 3 }]"
                             :min="0"
                             :max="100"
                             :step="0.01"
@@ -750,7 +794,7 @@
                       <a-col :span="12">
                         <a-form-item :label="$t('dashboard.indicator.backtest.field.takeProfitPct')">
                           <a-input-number
-                            v-decorator="['take_profit_pct', { initialValue: 0 }]"
+                            v-decorator="['take_profit_pct', { initialValue: 6 }]"
                             :min="0"
                             :max="1000"
                             :step="0.01"
@@ -1040,6 +1084,21 @@
                 </div>
               </a-form-item>
 
+              <!-- Live trading disclaimer: must accept before configuring live trading -->
+              <a-form-item v-if="executionModeUi === 'live' && canUseLiveTrading" class="live-disclaimer-item">
+                <a-alert
+                  type="warning"
+                  showIcon
+                  style="margin-bottom: 8px"
+                  :message="$t('trading-assistant.liveDisclaimer.title')"
+                  :description="$t('trading-assistant.liveDisclaimer.content')" />
+                <a-checkbox
+                  v-decorator="['live_disclaimer_ack', { valuePropName: 'checked', initialValue: false }]"
+                  @change="onLiveDisclaimerAckChange">
+                  {{ $t('trading-assistant.liveDisclaimer.agree') }}
+                </a-checkbox>
+              </a-form-item>
+
               <a-form-item :label="$t('trading-assistant.form.notifyChannels')">
                 <a-checkbox-group
                   v-decorator="['notify_channels', { initialValue: ['browser'] }]"
@@ -1088,7 +1147,15 @@
               <a-divider v-if="executionModeUi === 'live' && canUseLiveTrading" />
 
               <!-- Live trading: exchange credentials -->
-              <div v-if="executionModeUi === 'live' && canUseLiveTrading">
+              <a-alert
+                v-if="executionModeUi === 'live' && canUseLiveTrading && !liveDisclaimerAckUi"
+                type="warning"
+                showIcon
+                style="margin-bottom: 12px"
+                :message="$t('trading-assistant.liveDisclaimer.blockTitle')"
+                :description="$t('trading-assistant.liveDisclaimer.blockDesc')" />
+
+              <div v-if="executionModeUi === 'live' && canUseLiveTrading && liveDisclaimerAckUi">
                 <a-alert
                   type="info"
                   show-icon
@@ -1096,7 +1163,7 @@
                   :message="$t('trading-assistant.form.liveTradingConfigTitle')"
                   :description="$t('trading-assistant.form.liveTradingConfigHint')" />
 
-                <!-- ========== Broker Configuration (US/HK Stocks) ========== -->
+                <!-- ========== Broker Configuration (US Stocks) ========== -->
                 <template v-if="isIBKRMarket">
                   <a-form-item :label="$t('trading-assistant.form.broker')">
                     <a-select
@@ -1504,7 +1571,7 @@ const EXCHANGE_OPTIONS = [
   { value: 'deepcoin', labelKey: 'deepcoin' }
 ]
 
-// Traditional broker options (US/HK stocks) - extensible for future brokers
+// Traditional broker options (US stocks) - extensible for future brokers
 const BROKER_OPTIONS = [
   { value: 'ibkr', labelKey: 'ibkr', name: 'Interactive Brokers' }
   // Future brokers can be added here:
@@ -1530,6 +1597,20 @@ export default {
     PositionRecords
   },
   computed: {
+    isAdvancedMode () {
+      return this.creationMode === 'advanced'
+    },
+    isSimpleMode () {
+      return this.creationMode === 'simple'
+    },
+    // Map internal currentStep to displayed step index for simple mode
+    displayCurrentStep () {
+      if (this.isSimpleMode && !this.editingStrategy) {
+        // simple mode: step 0 → 0, step 2 → 1 (step 1 is skipped)
+        return this.currentStep === 0 ? 0 : 1
+      }
+      return this.currentStep
+    },
     isDarkTheme () {
       return this.navTheme === 'dark' || this.navTheme === 'realdark'
     },
@@ -1537,9 +1618,9 @@ export default {
       // Exchanges that require passphrase
       return ['okx', 'okex', 'coinbaseexchange', 'kucoin', 'bitget', 'deepcoin'].includes(this.currentExchangeId)
     },
-    // Check if current market uses IBKR (US Stock / HK Stock)
+    // Check if current market uses IBKR (US Stock)
     isIBKRMarket () {
-      return ['USStock', 'HShare'].includes(this.selectedMarketCategory)
+      return this.selectedMarketCategory === 'USStock'
     },
     // Check if current market uses MT5 (Forex)
     isMT5Market () {
@@ -1601,15 +1682,15 @@ export default {
       const cat = this.selectedMarketCategory || 'Crypto'
       return String(cat).toLowerCase() === 'crypto'
     },
-    // Check if selected market supports live trading (Crypto, USStock/HShare with IBKR, or Forex with MT5)
+    // Check if selected market supports live trading (Crypto, USStock with IBKR, or Forex with MT5)
     canUseLiveTrading () {
       const cat = this.selectedMarketCategory || 'Crypto'
       // Crypto always supports live trading via crypto exchanges
       if (String(cat).toLowerCase() === 'crypto') {
         return true
       }
-      // USStock/HShare can use IBKR for live trading
-      if (['USStock', 'HShare'].includes(cat)) {
+      // USStock can use IBKR for live trading
+      if (cat === 'USStock') {
         return true
       }
       // Forex can use MT5 for live trading
@@ -1626,8 +1707,8 @@ export default {
       if (String(cat).toLowerCase() === 'crypto') {
         return ['binance', 'okx', 'bitget', 'bybit', 'coinbaseexchange', 'kraken', 'kucoin', 'gate', 'bitfinex'].includes(exchangeId)
       }
-      // USStock/HShare use IBKR
-      if (['USStock', 'HShare'].includes(cat)) {
+      // USStock uses IBKR
+      if (cat === 'USStock') {
         return this.currentBrokerId === 'ibkr'
       }
       // Forex uses MT5
@@ -1641,7 +1722,7 @@ export default {
       // 目前仅支持 Binance 的 Demo Trading
       return this.currentExchangeId && this.currentExchangeId.toLowerCase() === 'binance'
     },
-    // Broker options for US/HK stocks (with i18n support)
+    // Broker options for US stocks (with i18n support)
     brokerOptions () {
       return BROKER_OPTIONS.map(broker => {
         let label = ''
@@ -1830,9 +1911,12 @@ export default {
       strategies: [],
       selectedStrategy: null,
       showFormModal: false,
+      // Simple / Advanced creation mode
+      creationMode: 'simple', // 'simple' or 'advanced'
+      showAdvancedSettings: false,
       // Only indicator strategy in local mode
       strategyType: 'indicator',
-      selectedMarketCategory: 'Crypto', // AShare / USStock / Crypto / Forex
+      selectedMarketCategory: 'Crypto', // USStock / Crypto / Forex / Futures
       currentStep: 0,
       saving: false,
       loadingIndicators: false,
@@ -1862,6 +1946,7 @@ export default {
       isEditMode: false, // 是否为编辑模式
       supportedIPs: [], // 白名单IP列表
       executionModeUi: 'signal',
+      liveDisclaimerAckUi: false,
       notifyChannelsUi: ['browser'],
       // User's notification settings from profile
       userNotificationSettings: {
@@ -1893,8 +1978,6 @@ export default {
       addSymbolMarketTypes: [
         { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
         { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
-        { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
-        { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' },
         { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
         { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
       ],
@@ -2223,9 +2306,7 @@ export default {
         USStock: 'green',
         Crypto: 'purple',
         Forex: 'gold',
-        Futures: 'cyan',
-        AShare: 'blue',
-        HShare: 'orange'
+        Futures: 'cyan'
       }
       return colors[market] || 'default'
     },
@@ -2257,7 +2338,7 @@ export default {
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: 'mt5' })
         } catch (e) { }
-      } else if (['USStock', 'HShare'].includes(this.selectedMarketCategory)) {
+      } else if (this.selectedMarketCategory === 'USStock') {
         this.currentBrokerId = 'ibkr'
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ broker_id: 'ibkr' })
@@ -2265,8 +2346,8 @@ export default {
       }
 
       // Markets without live trading support: force back to signal mode
-      // Crypto, USStock, HShare, Forex support live trading; others do not
-      const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'Forex'].includes(this.selectedMarketCategory)
+      // Crypto, USStock, Forex support live trading; others do not
+      const supportsLiveTrading = ['Crypto', 'USStock', 'Forex'].includes(this.selectedMarketCategory)
       if (!supportsLiveTrading) {
         this.executionModeUi = 'signal'
         try {
@@ -2300,7 +2381,7 @@ export default {
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ forex_broker_id: 'mt5' })
         } catch (e) { }
-      } else if (['USStock', 'HShare'].includes(this.selectedMarketCategory)) {
+      } else if (this.selectedMarketCategory === 'USStock') {
         this.currentBrokerId = 'ibkr'
         try {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ broker_id: 'ibkr' })
@@ -2308,7 +2389,7 @@ export default {
       }
 
       // Markets without live trading support: force back to signal mode
-      const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'Forex'].includes(this.selectedMarketCategory)
+      const supportsLiveTrading = ['Crypto', 'USStock', 'Forex'].includes(this.selectedMarketCategory)
       if (!supportsLiveTrading) {
         this.executionModeUi = 'signal'
         try {
@@ -2406,6 +2487,13 @@ export default {
     onExecutionModeChange (e) {
       const v = e && e.target ? e.target.value : e
       this.executionModeUi = v || 'signal'
+
+      // Reset disclaimer ack when switching execution mode
+      this.liveDisclaimerAckUi = false
+      try {
+        this.form && this.form.setFieldsValue && this.form.setFieldsValue({ live_disclaimer_ack: false })
+      } catch (err) { }
+
       // If market doesn't support live trading, force signal mode
       if (!this.canUseLiveTrading && this.executionModeUi !== 'signal') {
         this.executionModeUi = 'signal'
@@ -2413,6 +2501,13 @@ export default {
           this.form && this.form.setFieldsValue && this.form.setFieldsValue({ execution_mode: 'signal' })
         } catch (err) { }
       }
+    },
+    onLiveDisclaimerAckChange (e) {
+      const checked = !!(e && e.target && e.target.checked)
+      this.liveDisclaimerAckUi = checked
+      try {
+        this.form && this.form.setFieldsValue && this.form.setFieldsValue({ live_disclaimer_ack: checked })
+      } catch (err) { }
     },
     onNotifyChannelsChange (vals) {
       this.notifyChannelsUi = Array.isArray(vals) ? vals : []
@@ -2478,13 +2573,16 @@ export default {
       this.aiFilterEnabledUi = false
       this.selectedMarketCategory = 'Crypto'
       this.selectedSymbols = []
+      this.showAdvancedSettings = false
 
       this.form.resetFields()
       this.form.setFieldsValue({
         execution_mode: 'signal',
         notify_channels: ['browser'],
-        save_credential: false
+        save_credential: false,
+        live_disclaimer_ack: false
       })
+      this.liveDisclaimerAckUi = false
       this.showFormModal = true
 
       this.$nextTick(() => {
@@ -2543,6 +2641,8 @@ export default {
       this.selectedMarketCategory = strategy.market_category || 'Crypto'
       const executionMode = strategy.execution_mode || 'signal'
       this.executionModeUi = executionMode
+      // Editing an existing live strategy: default as acknowledged to avoid blocking edits
+      this.liveDisclaimerAckUi = executionMode === 'live'
       const notifyChannels = (strategy.notification_config && strategy.notification_config.channels) || ['browser']
       this.notifyChannelsUi = Array.isArray(notifyChannels) ? notifyChannels : ['browser']
 
@@ -2607,6 +2707,7 @@ export default {
 
       this.form.setFieldsValue({
         execution_mode: this.executionModeUi,
+        live_disclaimer_ack: this.liveDisclaimerAckUi,
         notify_channels: this.notifyChannelsUi,
         notify_email: strategy.notification_config?.targets?.email || '',
         notify_phone: strategy.notification_config?.targets?.phone || '',
@@ -2653,13 +2754,13 @@ export default {
       if (strategy.exchange_config) {
         const exchangeId = strategy.exchange_config.exchange_id || ''
         const isLive = this.executionModeUi === 'live'
-        const supportsLiveTrading = ['Crypto', 'USStock', 'HShare', 'Forex'].includes(this.selectedMarketCategory)
-        const isBrokerMarket = ['USStock', 'HShare'].includes(this.selectedMarketCategory)
+        const supportsLiveTrading = ['Crypto', 'USStock', 'Forex'].includes(this.selectedMarketCategory)
+        const isBrokerMarket = this.selectedMarketCategory === 'USStock'
         const isForexMarket = this.selectedMarketCategory === 'Forex'
 
         if (isLive && supportsLiveTrading) {
           if (isBrokerMarket) {
-            // Broker configuration (US/HK stocks)
+            // Broker configuration (US stocks)
             this.currentBrokerId = exchangeId || 'ibkr'
             this.form.setFieldsValue({
               broker_id: exchangeId || 'ibkr',
@@ -2858,6 +2959,9 @@ export default {
       this.trailingEnabledUi = false
       this.entryPctMaxUi = 100
       this.aiFilterEnabledUi = false
+      this.showAdvancedSettings = false
+      this.executionModeUi = 'signal'
+      this.liveDisclaimerAckUi = false
 
       this.form.resetFields()
     },
@@ -3577,17 +3681,15 @@ export default {
     // 表单步骤控制
     handleNext () {
       if (this.currentStep === 0) {
-        // Step 1: basic config (strategy name/symbol/capital/leverage/market type/timeframe)
-        // 编辑模式验证 symbol，创建模式验证 selectedSymbols（多选）
-        const fieldsToValidate = [
-          'indicator_id',
-          'strategy_name',
-          'initial_capital',
-          'market_type',
-          'leverage',
-          'trade_direction',
-          'timeframe'
-        ]
+        // Step 1: basic config
+        // In simple mode, only validate indicator_id, strategy_name, and symbols
+        // In advanced mode, also validate capital/leverage/market_type/direction/timeframe
+        const fieldsToValidate = ['indicator_id', 'strategy_name']
+
+        if (this.isAdvancedMode || this.editingStrategy) {
+          fieldsToValidate.push('initial_capital', 'market_type', 'leverage', 'trade_direction', 'timeframe')
+        }
+
         // 编辑模式需要验证 symbol 字段
         if (this.isEditMode) {
           fieldsToValidate.push('symbol')
@@ -3633,7 +3735,12 @@ export default {
             this.normalizeEntryPct()
           })
 
-          this.currentStep++
+          // In simple mode: skip step 1 (params) and jump directly to step 2 (execution)
+          if (this.isSimpleMode && !this.editingStrategy) {
+            this.currentStep = 2
+          } else {
+            this.currentStep++
+          }
         })
       } else if (this.currentStep === 1) {
         // Step 2: backtest-like configs are optional; proceed directly.
@@ -3649,7 +3756,12 @@ export default {
     },
     handlePrev () {
       if (this.currentStep > 0) {
-        this.currentStep--
+        // In simple mode: from step 2 (execution) go back to step 0 (basic), skipping step 1 (params)
+        if (this.isSimpleMode && !this.editingStrategy && this.currentStep === 2) {
+          this.currentStep = 0
+        } else {
+          this.currentStep--
+        }
       }
     },
     async handleSubmit () {
@@ -3658,6 +3770,12 @@ export default {
           try {
             this.saving = true
             const isLive = this.canUseLiveTrading && values.execution_mode === 'live'
+
+            if (isLive && !values.live_disclaimer_ack) {
+              this.$message.warning(this.$t('trading-assistant.liveDisclaimer.required'))
+              this.saving = false
+              return
+            }
 
             if (isLive) {
               const testResult = this.testResult
@@ -3729,7 +3847,7 @@ export default {
                 indicator_code: indicator.code || ''
               },
               exchange_config: isLive ? (this.isIBKRMarket ? {
-                // Broker configuration (US/HK stocks)
+                // Broker configuration (US stocks)
                 exchange_id: values.broker_id || this.currentBrokerId || 'ibkr',
                 // IBKR specific fields
                 ibkr_host: values.ibkr_host || '127.0.0.1',
@@ -5008,6 +5126,15 @@ export default {
     background: linear-gradient(180deg, #0d1117 0%, #161b22 100%);
     color: var(--dark-text-color, #fff);
 
+    .creation-mode-toggle {
+      background: rgba(24, 144, 255, 0.08);
+      border-color: rgba(24, 144, 255, 0.2);
+
+      .mode-hint {
+        color: rgba(255, 255, 255, 0.45);
+      }
+    }
+
     // 左侧策略列表卡片
     .strategy-list-col {
       .strategy-list-card {
@@ -5249,6 +5376,27 @@ export default {
   font-size: 12px;
   color: #999;
   margin-left: 4px;
+}
+
+// Simple/Advanced mode toggle
+.creation-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: rgba(24, 144, 255, 0.04);
+  border-radius: 8px;
+  border: 1px solid rgba(24, 144, 255, 0.12);
+
+  .mode-hint {
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 12px;
+  }
+}
+
+.simple-defaults-summary {
+  margin-top: 8px;
 }
 
 // 弹窗样式

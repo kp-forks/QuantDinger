@@ -3,6 +3,7 @@ Community Service - 指标社区服务
 
 处理指标市场、购买、评论等功能。
 """
+import json
 import time
 from decimal import Decimal
 from typing import Dict, Any, List, Optional, Tuple
@@ -19,6 +20,15 @@ class CommunityService:
     
     def __init__(self):
         self.billing = get_billing_service()
+        # Best-effort: ensure vip_free column exists (for old databases)
+        try:
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute("ALTER TABLE qd_indicator_codes ADD COLUMN IF NOT EXISTS vip_free BOOLEAN DEFAULT FALSE")
+                db.commit()
+                cur.close()
+        except Exception:
+            pass
     
     # ==========================================
     # 指标市场
@@ -78,7 +88,7 @@ class CommunityService:
                 # 获取列表（联表查询作者信息）
                 query_sql = f"""
                     SELECT 
-                        i.id, i.name, i.description, i.pricing_type, i.price,
+                        i.id, i.name, i.description, i.pricing_type, i.price, COALESCE(i.vip_free, FALSE) as vip_free,
                         i.preview_image, i.purchase_count, i.avg_rating, i.rating_count,
                         i.view_count, i.created_at, i.updated_at,
                         u.id as author_id, u.username as author_username, 
@@ -115,6 +125,7 @@ class CommunityService:
                         'description': row['description'][:200] if row['description'] else '',
                         'pricing_type': row['pricing_type'] or 'free',
                         'price': float(row['price'] or 0),
+                        'vip_free': bool(row.get('vip_free') or False),
                         'preview_image': row['preview_image'] or '',
                         'purchase_count': row['purchase_count'] or 0,
                         'avg_rating': float(row['avg_rating'] or 0),
@@ -152,7 +163,7 @@ class CommunityService:
                 # 获取指标信息
                 cur.execute("""
                     SELECT 
-                        i.id, i.name, i.description, i.pricing_type, i.price,
+                        i.id, i.name, i.description, i.pricing_type, i.price, COALESCE(i.vip_free, FALSE) as vip_free,
                         i.preview_image, i.purchase_count, i.avg_rating, i.rating_count,
                         i.view_count, i.publish_to_community, i.created_at, i.updated_at,
                         i.user_id,
@@ -196,6 +207,7 @@ class CommunityService:
                     'description': row['description'] or '',
                     'pricing_type': row['pricing_type'] or 'free',
                     'price': float(row['price'] or 0),
+                    'vip_free': bool(row.get('vip_free') or False),
                     'preview_image': row['preview_image'] or '',
                     'purchase_count': row['purchase_count'] or 0,
                     'avg_rating': float(row['avg_rating'] or 0),
@@ -234,7 +246,7 @@ class CommunityService:
                 
                 # 1. 获取指标信息
                 cur.execute("""
-                    SELECT id, user_id, name, code, description, pricing_type, price,
+                    SELECT id, user_id, name, code, description, pricing_type, price, COALESCE(vip_free, FALSE) as vip_free,
                            preview_image, is_encrypted
                     FROM qd_indicator_codes
                     WHERE id = ? AND publish_to_community = 1
@@ -248,6 +260,11 @@ class CommunityService:
                 seller_id = indicator['user_id']
                 price = float(indicator['price'] or 0)
                 pricing_type = indicator['pricing_type'] or 'free'
+                vip_free = bool(indicator.get('vip_free') or False)
+                is_vip, _ = self.billing.get_user_vip_status(buyer_id)
+
+                # VIP-free indicator: VIP users can get it without credits charge
+                effective_price = 0.0 if (vip_free and is_vip) else price
                 
                 # 2. 检查是否购买自己的指标
                 if seller_id == buyer_id:
@@ -264,17 +281,17 @@ class CommunityService:
                     return False, 'already_purchased', {}
                 
                 # 4. 如果是付费指标，检查并扣除积分
-                if pricing_type != 'free' and price > 0:
+                if pricing_type != 'free' and effective_price > 0:
                     buyer_credits = self.billing.get_user_credits(buyer_id)
-                    if buyer_credits < price:
+                    if buyer_credits < effective_price:
                         cur.close()
                         return False, 'insufficient_credits', {
-                            'required': price,
+                            'required': effective_price,
                             'current': float(buyer_credits)
                         }
                     
                     # 扣除买家积分
-                    new_buyer_balance = buyer_credits - Decimal(str(price))
+                    new_buyer_balance = buyer_credits - Decimal(str(effective_price))
                     cur.execute(
                         "UPDATE qd_users SET credits = ?, updated_at = NOW() WHERE id = ?",
                         (float(new_buyer_balance), buyer_id)
@@ -285,12 +302,12 @@ class CommunityService:
                         INSERT INTO qd_credits_log 
                         (user_id, action, amount, balance_after, feature, reference_id, remark, created_at)
                         VALUES (?, 'indicator_purchase', ?, ?, 'indicator_purchase', ?, ?, NOW())
-                    """, (buyer_id, -price, float(new_buyer_balance), str(indicator_id), 
+                    """, (buyer_id, -effective_price, float(new_buyer_balance), str(indicator_id), 
                           f"购买指标: {indicator['name']}"))
                     
                     # 给卖家增加积分（可配置抽成比例，这里先100%给卖家）
                     seller_credits = self.billing.get_user_credits(seller_id)
-                    new_seller_balance = seller_credits + Decimal(str(price))
+                    new_seller_balance = seller_credits + Decimal(str(effective_price))
                     cur.execute(
                         "UPDATE qd_users SET credits = ?, updated_at = NOW() WHERE id = ?",
                         (float(new_seller_balance), seller_id)
@@ -301,7 +318,7 @@ class CommunityService:
                         INSERT INTO qd_credits_log 
                         (user_id, action, amount, balance_after, feature, reference_id, remark, created_at)
                         VALUES (?, 'indicator_sale', ?, ?, 'indicator_sale', ?, ?, NOW())
-                    """, (seller_id, price, float(new_seller_balance), str(indicator_id),
+                    """, (seller_id, effective_price, float(new_seller_balance), str(indicator_id),
                           f"出售指标: {indicator['name']}"))
                 
                 # 5. 创建购买记录
@@ -309,16 +326,16 @@ class CommunityService:
                     INSERT INTO qd_indicator_purchases 
                     (indicator_id, buyer_id, seller_id, price, created_at)
                     VALUES (?, ?, ?, ?, NOW())
-                """, (indicator_id, buyer_id, seller_id, price))
+                """, (indicator_id, buyer_id, seller_id, effective_price))
                 
                 # 6. 复制指标到买家账户
                 now_ts = int(time.time())
                 cur.execute("""
                     INSERT INTO qd_indicator_codes
                     (user_id, is_buy, end_time, name, code, description,
-                     publish_to_community, pricing_type, price, is_encrypted, preview_image,
+                     publish_to_community, pricing_type, price, is_encrypted, preview_image, vip_free,
                      createtime, updatetime, created_at, updated_at)
-                    VALUES (?, 1, 0, ?, ?, ?, 0, 'free', 0, ?, ?, ?, ?, NOW(), NOW())
+                    VALUES (?, 1, 0, ?, ?, ?, 0, 'free', 0, ?, ?, 0, ?, ?, NOW(), NOW())
                 """, (
                     buyer_id,
                     indicator['name'],
@@ -339,8 +356,8 @@ class CommunityService:
                 db.commit()
                 cur.close()
                 
-                logger.info(f"User {buyer_id} purchased indicator {indicator_id} for {price} credits")
-                return True, 'success', {'indicator_name': indicator['name'], 'price': price}
+                logger.info(f"User {buyer_id} purchased indicator {indicator_id} for {effective_price} credits (vip_free={vip_free}, is_vip={is_vip})")
+                return True, 'success', {'indicator_name': indicator['name'], 'price': price, 'charged': effective_price, 'vip_free': vip_free}
                 
         except Exception as e:
             logger.error(f"purchase_indicator failed: {e}")
@@ -864,14 +881,16 @@ class CommunityService:
             return {'pending': 0, 'approved': 0, 'rejected': 0}
     
     # ==========================================
-    # 实盘表现（聚合回测数据）
+    # 实盘表现（聚合回测 + 实盘交易数据）
     # ==========================================
-    
+
     def get_indicator_performance(self, indicator_id: int) -> Dict[str, Any]:
         """
         获取指标的实盘表现统计
-        
-        目前基于回测数据统计，未来可扩展为实盘交易数据
+
+        数据来源：
+        1. qd_backtest_runs - 回测记录（result_json 内含 totalReturn / winRate 等）
+        2. qd_strategy_trades + qd_strategies_trading - 真实实盘交易记录
         """
         default_result = {
             'strategy_count': 0,
@@ -881,49 +900,125 @@ class CommunityService:
             'avg_return': 0,
             'max_drawdown': 0
         }
-        
+
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
-                
-                # 首先检查回测记录表是否存在
-                cur.execute("""
-                    SELECT COUNT(*) as cnt FROM information_schema.tables 
-                    WHERE table_name = 'qd_backtest_runs'
-                """)
-                table_exists = cur.fetchone()
-                if not table_exists or table_exists['cnt'] == 0:
-                    cur.close()
-                    return default_result
-                
-                # 从回测记录中统计该指标的表现
-                # 使用 indicator_id 字段匹配
-                cur.execute("""
-                    SELECT 
-                        COUNT(*) as run_count,
-                        AVG(CASE WHEN total_return IS NOT NULL THEN total_return ELSE 0 END) as avg_return,
-                        AVG(CASE WHEN win_rate IS NOT NULL THEN win_rate ELSE 0 END) as avg_win_rate,
-                        AVG(CASE WHEN max_drawdown IS NOT NULL THEN max_drawdown ELSE 0 END) as avg_drawdown,
-                        SUM(CASE WHEN trade_count IS NOT NULL THEN trade_count ELSE 0 END) as total_trades
-                    FROM qd_backtest_runs
-                    WHERE indicator_id = ?
-                """, (indicator_id,))
-                
-                row = cur.fetchone()
+
+                # ---------- Part 1: 回测数据（从 result_json 解析） ----------
+                bt_returns = []
+                bt_win_rates = []
+                bt_drawdowns = []
+                bt_trade_counts = []
+
+                try:
+                    cur.execute("""
+                        SELECT result_json
+                        FROM qd_backtest_runs
+                        WHERE indicator_id = %s AND status = 'success'
+                              AND result_json IS NOT NULL AND result_json != ''
+                    """, (indicator_id,))
+                    rows = cur.fetchall()
+
+                    for row in rows:
+                        try:
+                            rj = json.loads(row['result_json']) if isinstance(row['result_json'], str) else {}
+                            tr = float(rj.get('totalReturn', 0) or 0)
+                            wr = float(rj.get('winRate', 0) or 0)
+                            md = float(rj.get('maxDrawdown', 0) or 0)
+                            tc = int(rj.get('totalTrades', 0) or 0)
+                            bt_returns.append(tr)
+                            bt_win_rates.append(wr)
+                            bt_drawdowns.append(md)
+                            bt_trade_counts.append(tc)
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+                except Exception:
+                    logger.debug("Backtest runs query skipped or failed", exc_info=True)
+
+                bt_run_count = len(bt_returns)
+
+                # ---------- Part 2: 实盘交易数据 ----------
+                live_strategy_count = 0
+                live_trade_count = 0
+                live_win_rate = 0.0
+                live_total_profit = 0.0
+
+                try:
+                    # 找出使用该指标的策略（indicator_config JSON 中 indicator_id 匹配）
+                    cur.execute("""
+                        SELECT id FROM qd_strategies_trading
+                        WHERE indicator_config::text LIKE %s
+                    """, (f'%"indicator_id": {indicator_id}%',))
+                    strategy_rows = cur.fetchall()
+
+                    # 也尝试匹配无空格的格式
+                    if not strategy_rows:
+                        cur.execute("""
+                            SELECT id FROM qd_strategies_trading
+                            WHERE indicator_config::text LIKE %s
+                        """, (f'%"indicator_id":{indicator_id}%',))
+                        strategy_rows = cur.fetchall()
+
+                    if strategy_rows:
+                        strategy_ids = [r['id'] for r in strategy_rows]
+                        live_strategy_count = len(strategy_ids)
+
+                        placeholders = ','.join(['%s'] * len(strategy_ids))
+                        cur.execute(f"""
+                            SELECT 
+                                COUNT(*) as trade_count,
+                                SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as win_count,
+                                SUM(profit) as total_profit
+                            FROM qd_strategy_trades
+                            WHERE strategy_id IN ({placeholders})
+                              AND profit != 0
+                        """, tuple(strategy_ids))
+                        trade_row = cur.fetchone()
+
+                        if trade_row and (trade_row['trade_count'] or 0) > 0:
+                            live_trade_count = int(trade_row['trade_count'] or 0)
+                            win_count = int(trade_row['win_count'] or 0)
+                            live_win_rate = round(win_count / live_trade_count * 100, 2) if live_trade_count > 0 else 0.0
+                            live_total_profit = round(float(trade_row['total_profit'] or 0), 2)
+                except Exception:
+                    logger.debug("Live trading query skipped or failed", exc_info=True)
+
                 cur.close()
-                
-                if not row or row['run_count'] == 0:
+
+                # ---------- Combine results ----------
+                total_strategy_count = bt_run_count + live_strategy_count
+                total_trade_count = sum(bt_trade_counts) + live_trade_count
+
+                # 综合胜率：优先实盘 > 回测平均
+                if live_trade_count > 0:
+                    combined_win_rate = live_win_rate
+                elif bt_win_rates:
+                    combined_win_rate = round(sum(bt_win_rates) / len(bt_win_rates), 2)
+                else:
+                    combined_win_rate = 0.0
+
+                # 平均收益率（回测 totalReturn %）
+                avg_return = round(sum(bt_returns) / len(bt_returns), 2) if bt_returns else 0.0
+
+                # 总利润：优先用实盘绝对利润，无实盘则显示回测平均收益率
+                combined_profit = live_total_profit if live_trade_count > 0 else avg_return
+
+                # 最大回撤取回测中最差的（maxDrawdown 是负数，取最小即最差）
+                avg_drawdown = round(min(bt_drawdowns), 2) if bt_drawdowns else 0.0
+
+                if total_strategy_count == 0 and total_trade_count == 0:
                     return default_result
-                
+
                 return {
-                    'strategy_count': row['run_count'] or 0,
-                    'trade_count': row['total_trades'] or 0,
-                    'win_rate': round(float(row['avg_win_rate'] or 0), 2),
-                    'total_profit': round(float(row['avg_return'] or 0), 2),
-                    'avg_return': round(float(row['avg_return'] or 0), 2),
-                    'max_drawdown': round(float(row['avg_drawdown'] or 0), 2)
+                    'strategy_count': total_strategy_count,
+                    'trade_count': total_trade_count,
+                    'win_rate': combined_win_rate,
+                    'total_profit': round(combined_profit, 2),
+                    'avg_return': avg_return,
+                    'max_drawdown': avg_drawdown
                 }
-                
+
         except Exception as e:
             logger.error(f"get_indicator_performance failed: {e}")
             return default_result

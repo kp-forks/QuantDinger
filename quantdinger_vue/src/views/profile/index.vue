@@ -84,7 +84,7 @@
               </div>
               <div class="credits-hint" v-if="billing.billing_enabled">
                 <a-icon type="info-circle" />
-                <span>{{ $t('profile.credits.hint') || '使用AI分析等功能会消耗积分，VIP用户免费' }}</span>
+                <span>{{ $t('profile.credits.hint') || '使用AI分析/回测/监控等功能会消耗积分；VIP仅可免费使用VIP免费指标。' }}</span>
               </div>
             </a-card>
           </a-col>
@@ -715,8 +715,8 @@ export default {
     },
 
     handleRecharge () {
-      // 跳转到 Telegram 客服
-      window.open(this.rechargeTelegramUrl, '_blank')
+      // 跳转到站内会员/充值页
+      this.$router.push('/billing')
     },
 
     formatCredits (credits) {

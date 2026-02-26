@@ -1,5 +1,5 @@
 <template>
-  <div class="portfolio-container" :class="{ 'theme-dark': isDarkTheme }">
+  <div class="portfolio-container" :class="{ 'theme-dark': isDarkTheme, embedded: embedded }">
     <!-- 资产总览 - 第一行：核心数据 -->
     <div class="summary-section">
       <div class="summary-card total-value">
@@ -385,7 +385,7 @@
       </div>
 
       <!-- 监控任务 -->
-      <div class="monitors-section">
+      <div class="monitors-section" ref="monitorsSection">
         <div class="section-header">
           <h3>
             <a-icon type="eye" />
@@ -896,6 +896,12 @@ import { getNotificationSettings } from '@/api/user'
 
 export default {
   name: 'Portfolio',
+  props: {
+    embedded: {
+      type: Boolean,
+      default: false
+    }
+  },
   data () {
     return {
       simpleImage: Empty.PRESENTED_IMAGE_SIMPLE,
@@ -1165,8 +1171,6 @@ export default {
         this.marketTypes = [
           { value: 'USStock', i18nKey: 'dashboard.analysis.market.USStock' },
           { value: 'Crypto', i18nKey: 'dashboard.analysis.market.Crypto' },
-          { value: 'AShare', i18nKey: 'dashboard.analysis.market.AShare' },
-          { value: 'HShare', i18nKey: 'dashboard.analysis.market.HShare' },
           { value: 'Forex', i18nKey: 'dashboard.analysis.market.Forex' },
           { value: 'Futures', i18nKey: 'dashboard.analysis.market.Futures' }
         ]
@@ -1503,6 +1507,14 @@ export default {
       }
     },
     // Monitor methods
+    focusMonitorsSection () {
+      this.$nextTick(() => {
+        const node = this.$refs.monitorsSection
+        if (node && typeof node.scrollIntoView === 'function') {
+          node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      })
+    },
     openAddMonitorModal () {
       // Initialize with user's default notification settings
       this.editingMonitor = null
@@ -1728,9 +1740,7 @@ export default {
         'USStock': 'green',
         'Crypto': 'purple',
         'Forex': 'gold',
-        'Futures': 'cyan',
-        'AShare': 'blue',
-        'HShare': 'orange'
+        'Futures': 'cyan'
       }
       return colors[market] || 'default'
     },
@@ -1930,6 +1940,12 @@ export default {
       }
     }
   }
+}
+
+.portfolio-container.embedded {
+  padding: 0;
+  background: transparent;
+  min-height: auto;
 }
 
 .summary-section {

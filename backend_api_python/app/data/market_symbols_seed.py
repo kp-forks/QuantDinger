@@ -28,7 +28,7 @@ def get_hot_symbols(market: str, limit: int = 10) -> List[Dict]:
     Get hot symbols for a market.
     
     Args:
-        market: Market name (e.g., 'Crypto', 'USStock', 'AShare')
+        market: Market name (e.g., 'Crypto', 'USStock', 'Forex')
         limit: Maximum number of results
         
     Returns:
@@ -100,18 +100,12 @@ def search_symbols(market: str, keyword: str, limit: int = 20) -> List[Dict]:
 
 
 def _normalize_for_match(market: str, symbol: str) -> str:
-    """Normalize symbol for matching (padding digits for A-Share/H-Share)."""
+    """Normalize symbol for matching."""
     m = (market or '').strip()
     s = (symbol or '').strip().upper()
     if not m or not s:
         return s
 
-    # A-Share codes are usually 6 digits
-    if m == 'AShare' and s.isdigit() and len(s) < 6:
-        s = s.zfill(6)
-    # H-Share codes are often 5 digits
-    if m == 'HShare' and s.isdigit() and len(s) < 5:
-        s = s.zfill(5)
     return s
 
 

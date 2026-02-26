@@ -21,7 +21,15 @@ export const asyncRouterMap = [
         path: '/ai-analysis/:pageNo([1-9]\\d*)?',
         name: 'Analysis',
         component: () => import('@/views/ai-analysis'),
+        hidden: true,
         meta: { title: 'menu.dashboard.analysis', keepAlive: false, icon: 'thunderbolt', permission: ['dashboard'] }
+      },
+      // AI资产分析（统一入口）
+      {
+        path: '/ai-asset-analysis',
+        name: 'AIAssetAnalysis',
+        component: () => import('@/views/ai-asset-analysis'),
+        meta: { title: 'menu.dashboard.aiAssetAnalysis', keepAlive: false, icon: 'appstore', permission: ['dashboard'] }
       },
       // 指标分析
       {
@@ -49,6 +57,7 @@ export const asyncRouterMap = [
         path: '/portfolio',
         name: 'Portfolio',
         component: () => import('@/views/portfolio'),
+        hidden: true,
         meta: { title: 'menu.dashboard.portfolio', keepAlive: true, icon: 'fund', permission: ['dashboard'] }
       },
       // 用户管理 (admin only)
@@ -64,6 +73,13 @@ export const asyncRouterMap = [
         name: 'Profile',
         component: () => import('@/views/profile'),
         meta: { title: 'menu.myProfile', keepAlive: false, icon: 'user', permission: ['dashboard'] }
+      },
+      // 会员/充值
+      {
+        path: '/billing',
+        name: 'Billing',
+        component: () => import('@/views/billing'),
+        meta: { title: 'menu.billing', keepAlive: false, icon: 'wallet', permission: ['dashboard'] }
       },
       // 系统设置 (admin only) - 放在最后
       {

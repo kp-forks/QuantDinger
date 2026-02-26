@@ -830,11 +830,7 @@ const locale = {
 
 'dashboard.analysis.modal.addStock.nameWillBeFetched': 'Tên sẽ được tự động lấy khi thêm',
 
-'dashboard.analysis.market.AShare': 'Cổ phiếu loại A',
-
 'dashboard.analysis.market.USStock': 'Cổ phiếu Mỹ',
-
-'dashboard.analysis.market.HShare': 'Cổ phiếu Hồng Kông cổ phiếu',
 
 'dashboard.analysis.market.Crypto': 'Tiền điện tử',
 
@@ -1138,11 +1134,7 @@ const locale = {
 
 'dashboard.indicator.drawing.clearAll': 'xóa tất cả các đường đã vẽ',
 
-'dashboard.indicator.market.AShare': 'cổ phiếu A',
-
 'dashboard.indicator.market.USStock': 'cổ phiếu Mỹ',
-
-'dashboard.indicator.market.HShare': 'cổ phiếu Hồng Kông',
 
 'dashboard.indicator.market.Crypto': 'tiền điện tử',
 

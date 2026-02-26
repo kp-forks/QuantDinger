@@ -22,7 +22,10 @@
         </a-tag>
       </template>
       <template slot="entryPrice" slot-scope="text, record">
-        ${{ parseFloat(record.entry_price || text || 0).toFixed(4) }}
+        <span v-if="hasValidPrice(record.entry_price || text)">
+          ${{ parseFloat(record.entry_price || text).toFixed(4) }}
+        </span>
+        <span v-else>--</span>
       </template>
       <template slot="currentPrice" slot-scope="text, record">
         ${{ parseFloat(record.current_price || text || 0).toFixed(4) }}
@@ -160,12 +163,8 @@ export default {
             if (!isFinite(lev) || lev <= 0) lev = 1
             if (mt === 'spot') lev = 1
 
-            // 处理 entry_price：如果为 0 或 null，尝试使用 current_price 作为后备
-            let entryPrice = parseFloat(position.entry_price || position.entryPrice || 0)
-            if (!entryPrice || entryPrice <= 0) {
-              // 如果 entry_price 无效，尝试使用 current_price（可能是新开仓，价格相同）
-              entryPrice = parseFloat(position.current_price || position.currentPrice || 0)
-            }
+            // 处理 entry_price：不要回退到 current_price，避免误导显示开仓价=现价
+            const entryPrice = parseFloat(position.entry_price || position.entryPrice || 0)
             const size = parseFloat(position.size || '0') || 0
             const pnl = parseFloat(position.unrealized_pnl || position.unrealizedPnl || '0') || 0
             let pnlPercent = parseFloat(position.pnl_percent || position.pnlPercent || '0') || 0
@@ -183,7 +182,7 @@ export default {
               symbol: position.symbol || '',
               side: position.side || 'long',
               size: size > 0 ? size.toString() : '0',
-              entry_price: entryPrice > 0 ? entryPrice.toString() : (position.entry_price || position.entryPrice || '0'),
+              entry_price: entryPrice > 0 ? entryPrice.toString() : '0',
               current_price: position.current_price || position.currentPrice || '0',
               unrealized_pnl: position.unrealized_pnl || position.unrealizedPnl || '0',
               pnl_percent: pnlPercent,
@@ -198,6 +197,10 @@ export default {
       } catch (error) {
         this.positions = []
       }
+    },
+    hasValidPrice (price) {
+      const value = parseFloat(price)
+      return Number.isFinite(value) && value > 0
     },
     startPolling () {
       this.stopPolling()

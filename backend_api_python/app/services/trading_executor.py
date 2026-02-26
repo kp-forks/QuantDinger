@@ -556,7 +556,7 @@ class TradingExecutor:
                 trade_direction = 'long'  # 现货只能做多
                 logger.info(f"Strategy {strategy_id} spot trading; force trade_direction=long")
 
-            # 获取市场类别（Crypto, USStock, Forex, Futures, AShare, HShare）
+            # 获取市场类别（Crypto, USStock, Forex, Futures）
             # 这决定了使用哪个数据源来获取价格和K线数据
             market_category = (strategy.get('market_category') or 'Crypto').strip()
             logger.info(f"Strategy {strategy_id} market_category: {market_category}")
@@ -1131,7 +1131,7 @@ class TradingExecutor:
             symbol: 交易对/代码
             timeframe: 时间周期
             limit: 数据条数
-            market_category: 市场类型 (Crypto, USStock, Forex, Futures, AShare, HShare)
+            market_category: 市场类型 (Crypto, USStock, Forex, Futures)
         """
         try:
             # 使用 KlineService 获取K线数据（自动处理缓存）
@@ -1153,7 +1153,7 @@ class TradingExecutor:
             exchange: 交易所实例（信号模式下为 None）
             symbol: 交易对/代码
             market_type: 交易类型 (swap/spot)
-            market_category: 市场类型 (Crypto, USStock, Forex, Futures, AShare, HShare)
+            market_category: 市场类型 (Crypto, USStock, Forex, Futures)
         """
         # Local in-memory cache first
         cache_key = f"{market_category}:{(symbol or '').strip().upper()}"
@@ -1173,7 +1173,7 @@ class TradingExecutor:
             
         try:
             # 根据 market_category 选择正确的数据源
-            # 支持: Crypto, USStock, Forex, Futures, AShare, HShare
+            # 支持: Crypto, USStock, Forex, Futures
             ticker = DataSourceFactory.get_ticker(market_category, symbol)
             if ticker:
                 price = float(ticker.get('last') or ticker.get('close') or 0)

@@ -178,11 +178,11 @@ class DataCache:
 # 全局缓存实例
 # ============================================
 
-# A股实时行情缓存（20分钟TTL，全市场数据量大）
-_ashare_realtime_cache = DataCache(
-    name="ashare_realtime",
+# 实时行情缓存（20分钟TTL）
+_realtime_cache = DataCache(
+    name="realtime",
     default_ttl=1200.0,  # 20分钟
-    max_size=6000        # 约5000+股票
+    max_size=6000
 )
 
 # K线数据缓存（5分钟TTL，按需缓存）
@@ -202,7 +202,7 @@ _stock_info_cache = DataCache(
 
 def get_realtime_cache() -> DataCache:
     """获取实时行情缓存"""
-    return _ashare_realtime_cache
+    return _realtime_cache
 
 
 def get_kline_cache() -> DataCache:

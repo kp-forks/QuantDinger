@@ -219,7 +219,7 @@ export default {
       saving: false,
       schema: {},
       values: {},
-      activeKeys: ['server', 'auth', 'ai', 'trading'],
+      activeKeys: ['auth', 'ai', 'trading'],
       passwordVisible: {},
       showRestartTip: false,
       // OpenRouter 余额
@@ -311,19 +311,17 @@ export default {
     getGroupIcon (groupKey) {
       const icons = {
         auth: 'lock',
-        server: 'cloud-server',
-        worker: 'schedule',
-        notification: 'notification',
         email: 'mail',
         sms: 'phone',
-        strategy: 'fund',
         network: 'global',
         app: 'appstore',
         ai: 'robot',
         trading: 'stock',
         data_source: 'database',
         search: 'search',
-        agent: 'experiment'
+        agent: 'experiment',
+        security: 'safety',
+        billing: 'dollar'
       }
       return icons[groupKey] || 'setting'
     },
