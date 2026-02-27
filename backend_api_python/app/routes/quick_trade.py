@@ -830,6 +830,18 @@ def close_position():
         avg_fill = float(getattr(result, "avg_price", 0) or 0)
         raw = getattr(result, "raw", {}) or {}
         
+        # ---- calculate USDT amount for recording ----
+        # Convert base asset quantity to USDT amount for consistent recording
+        # amount (USDT) = base_qty * price
+        usdt_amount = actual_close_size * avg_fill if avg_fill > 0 else 0
+        # If price is not available, try to use entry price or mark price as fallback
+        if usdt_amount <= 0:
+            entry_price = float(position.get("entry_price") or 0)
+            mark_price = float(position.get("mark_price") or 0)
+            fallback_price = mark_price if mark_price > 0 else entry_price
+            if fallback_price > 0:
+                usdt_amount = actual_close_size * fallback_price
+        
         # ---- record trade ----
         trade_id = _record_quick_trade(
             user_id=user_id,
@@ -838,7 +850,7 @@ def close_position():
             symbol=symbol,
             side="sell" if position_side == "long" else "buy",  # Opposite of position side
             order_type="market",
-            amount=actual_close_size,  # Record position size
+            amount=usdt_amount,  # Record USDT amount, not base asset quantity
             price=avg_fill,
             leverage=float(position.get("leverage") or 1),
             market_type=market_type,

@@ -214,6 +214,19 @@ class PendingOrderWorker:
                 market_type = str(market_type or "swap").strip().lower()
                 if market_type in ("futures", "future", "perp", "perpetual"):
                     market_type = "swap"
+                
+                # Get strategy's trading symbol(s) to filter positions
+                # Only sync positions for symbols that this strategy actually trades
+                strategy_symbol = (sc.get("symbol") or "").strip()
+                trading_config = sc.get("trading_config") or {}
+                symbol_list = trading_config.get("symbol_list") or []
+                # Normalize symbol list: convert to set for fast lookup
+                allowed_symbols = set()
+                if strategy_symbol:
+                    allowed_symbols.add(strategy_symbol.upper())
+                for sym in symbol_list:
+                    if sym and isinstance(sym, str):
+                        allowed_symbols.add(sym.strip().upper())
 
                 # Lazy import MT5 here to allow elif chain later
                 global MT5Client
@@ -500,10 +513,23 @@ class PendingOrderWorker:
                             to_update.append({"id": rid, "size": exch_qty, "entry_price": exch_price})
 
                 # [New Feature] Detect positions that exist on exchange but not in local DB, and insert them.
+                # IMPORTANT: Only insert positions for symbols that this strategy actually trades
+                # This prevents syncing positions from quick trade or other sources
                 to_insert: List[Dict[str, Any]] = []
                 local_symbols_sides = {(str(r.get("symbol") or "").strip(), str(r.get("side") or "").strip().lower()) for r in plist}
                 
                 for _sym, _sides_map in exch_size.items():
+                    # Filter: only sync positions for symbols that this strategy trades
+                    # If strategy has no symbol configured, skip auto-insert to prevent syncing quick trade positions
+                    _sym_upper = _sym.strip().upper()
+                    if allowed_symbols and _sym_upper not in allowed_symbols:
+                        logger.debug(f"[PositionSync] Skipping {_sym}: not in strategy's symbol list (strategy trades: {allowed_symbols})")
+                        continue
+                    elif not allowed_symbols:
+                        # Strategy has no symbol configured - skip to prevent syncing unrelated positions
+                        logger.debug(f"[PositionSync] Skipping {_sym}: strategy has no symbol configured (preventing quick trade position sync)")
+                        continue
+                    
                     for _side, _qty in _sides_map.items():
                         if _qty > 1e-12 and (_sym, _side) not in local_symbols_sides:
                             # Exchange has this position but local DB does not
