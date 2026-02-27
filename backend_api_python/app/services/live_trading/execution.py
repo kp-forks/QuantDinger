@@ -2,7 +2,7 @@
 Translate a strategy signal into a direct-exchange order call.
 
 Supports:
-- Crypto exchanges: Binance, OKX, Bitget, Bybit, Coinbase, Kraken, KuCoin, Gate, Bitfinex
+- Crypto exchanges: Binance, OKX, Bitget, Bybit, Coinbase, Kraken, KuCoin, Gate, Bitfinex, Deepcoin
 - Traditional brokers: Interactive Brokers (IBKR) for US stocks
 - Forex brokers: MetaTrader 5 (MT5)
 """
@@ -25,6 +25,9 @@ from app.services.live_trading.kucoin import KucoinSpotClient
 from app.services.live_trading.kucoin import KucoinFuturesClient
 from app.services.live_trading.gate import GateSpotClient, GateUsdtFuturesClient
 from app.services.live_trading.bitfinex import BitfinexClient, BitfinexDerivativesClient
+
+# Lazy import Deepcoin
+DeepcoinClient = None
 
 # Lazy import IBKR
 IBKRClient = None
@@ -94,6 +97,7 @@ def place_order_from_signal(
             side=side,
             pos_side=pos_side,
             size=qty,
+            market_type=mt,
             td_mode=str(td_mode),
             reduce_only=reduce_only,
             client_order_id=client_order_id,
@@ -154,6 +158,25 @@ def place_order_from_signal(
         return client.place_market_order(symbol=symbol, side=side, size=qty, client_order_id=client_order_id)
     if isinstance(client, KrakenFuturesClient):
         return client.place_market_order(symbol=symbol, side=side, size=qty, reduce_only=reduce_only, client_order_id=client_order_id)
+
+    # Check for Deepcoin client (lazy import to avoid circular dependency)
+    global DeepcoinClient
+    if DeepcoinClient is None:
+        try:
+            from app.services.live_trading.deepcoin import DeepcoinClient as _DeepcoinClient
+            DeepcoinClient = _DeepcoinClient
+        except ImportError:
+            pass
+
+    if DeepcoinClient is not None and isinstance(client, DeepcoinClient):
+        return client.place_market_order(
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            reduce_only=reduce_only,
+            pos_side=pos_side,
+            client_order_id=client_order_id,
+        )
 
     # Check for IBKR client (lazy import to avoid circular dependency)
     global IBKRClient
