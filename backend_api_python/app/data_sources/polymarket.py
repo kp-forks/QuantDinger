@@ -262,18 +262,26 @@ class PolymarketDataSource:
                 cur.close()
                 
                 if rows:
-                    return [{
-                        "market_id": str(row.get('market_id') or ''),
-                        "question": row.get('question') or '',
-                        "category": row.get('category') or 'other',
-                        "current_probability": float(row.get('current_probability') or 0),
-                        "volume_24h": float(row.get('volume_24h') or 0),
-                        "liquidity": float(row.get('liquidity') or 0),
-                        "end_date_iso": row.get('end_date_iso'),
-                        "status": row.get('status') or 'active',
-                        "outcome_tokens": row.get('outcome_tokens') if row.get('outcome_tokens') else {},
-                        "polymarket_url": f"https://polymarket.com/event/{row.get('market_id') or ''}"
-                    } for row in rows]
+                    result = []
+                    for row in rows:
+                        market_id = str(row.get('market_id') or '')
+                        slug = row.get('slug')
+                        # 确保使用正确的URL构建方法
+                        polymarket_url = self._build_polymarket_url(slug, market_id)
+                        result.append({
+                            "market_id": market_id,
+                            "question": row.get('question') or '',
+                            "category": row.get('category') or 'other',
+                            "current_probability": float(row.get('current_probability') or 0),
+                            "volume_24h": float(row.get('volume_24h') or 0),
+                            "liquidity": float(row.get('liquidity') or 0),
+                            "end_date_iso": row.get('end_date_iso'),
+                            "status": row.get('status') or 'active',
+                            "outcome_tokens": row.get('outcome_tokens') if row.get('outcome_tokens') else {},
+                            "polymarket_url": polymarket_url,
+                            "slug": slug if slug and not str(slug).isdigit() else None
+                        })
+                    return result
             
             return None
         except Exception as e:

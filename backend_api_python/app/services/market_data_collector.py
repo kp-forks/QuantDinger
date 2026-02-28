@@ -1242,6 +1242,18 @@ class MarketDataCollector:
                 market_id = market_data.get('market_id')
                 if market_id and market_id not in seen:
                     seen.add(market_id)
+                    # 构建正确的 Polymarket URL
+                    # 优先使用已有的 polymarket_url，如果没有则根据 slug 或 market_id 构建
+                    polymarket_url = market_data.get('polymarket_url')
+                    if not polymarket_url:
+                        slug = market_data.get('slug')
+                        if slug and not str(slug).isdigit() and ('-' in str(slug) or any(c.isalpha() for c in str(slug))):
+                            # 使用有效的 slug
+                            polymarket_url = f"https://polymarket.com/event/{slug}"
+                        else:
+                            # 使用 markets 端点（更可靠）
+                            polymarket_url = f"https://polymarket.com/markets/{market_id}"
+                    
                     result.append({
                         "market_id": market_id,
                         "question": market_data.get('question', ''),
@@ -1249,7 +1261,7 @@ class MarketDataCollector:
                         "volume_24h": market_data.get('volume_24h', 0),
                         "liquidity": market_data.get('liquidity', 0),
                         "category": market_data.get('category', 'other'),
-                        "polymarket_url": market_data.get('polymarket_url', f"https://polymarket.com/event/{market_id}")
+                        "polymarket_url": polymarket_url
                     })
             
             logger.info(f"Total {len(result)} unique Polymarket events found for {symbol}")

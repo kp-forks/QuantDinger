@@ -160,13 +160,20 @@ def get_markets():
             opportunity_markets = markets[:min(limit, len(markets))]
         
         # 排序和筛选
+        # 辅助函数：安全获取 ai_analysis 数据（处理 None 情况）
+        def safe_get_ai_analysis(market, key, default=0):
+            ai_analysis = market.get('ai_analysis')
+            if ai_analysis is None:
+                return default
+            return ai_analysis.get(key, default) or default
+        
         if sort_by == "ai_score":
             # 按AI机会评分排序（高概率/高回报比优先）
             opportunity_markets.sort(
                 key=lambda x: (
-                    x.get('ai_analysis', {}).get('opportunity_score', 0) or 0,
-                    abs(x.get('ai_analysis', {}).get('divergence', 0) or 0),  # 差异越大越好
-                    x.get('ai_analysis', {}).get('confidence_score', 0) or 0  # 置信度越高越好
+                    safe_get_ai_analysis(x, 'opportunity_score', 0),
+                    abs(safe_get_ai_analysis(x, 'divergence', 0)),  # 差异越大越好
+                    safe_get_ai_analysis(x, 'confidence_score', 0)  # 置信度越高越好
                 ),
                 reverse=True
             )
@@ -174,8 +181,8 @@ def get_markets():
             # 高概率机会：AI预测概率 > 市场概率 + 10%
             opportunity_markets.sort(
                 key=lambda x: (
-                    x.get('ai_analysis', {}).get('ai_predicted_probability', 0) or 0,
-                    x.get('ai_analysis', {}).get('confidence_score', 0) or 0
+                    safe_get_ai_analysis(x, 'ai_predicted_probability', 0),
+                    safe_get_ai_analysis(x, 'confidence_score', 0)
                 ),
                 reverse=True
             )
@@ -183,9 +190,9 @@ def get_markets():
             # 高回报比机会：AI与市场差异大且置信度高
             opportunity_markets.sort(
                 key=lambda x: (
-                    abs(x.get('ai_analysis', {}).get('divergence', 0) or 0) * 
-                    (x.get('ai_analysis', {}).get('confidence_score', 0) or 0) / 100,
-                    x.get('ai_analysis', {}).get('opportunity_score', 0) or 0
+                    abs(safe_get_ai_analysis(x, 'divergence', 0)) * 
+                    safe_get_ai_analysis(x, 'confidence_score', 0) / 100,
+                    safe_get_ai_analysis(x, 'opportunity_score', 0)
                 ),
                 reverse=True
             )
