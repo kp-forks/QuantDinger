@@ -295,6 +295,32 @@ class PendingOrderWorker:
                             except Exception:
                                 pass
                             exch_size.setdefault(hb_sym, {"long": 0.0, "short": 0.0})[side] = float(qty_base)
+                            
+                            # Extract entry price from OKX position data
+                            # OKX API returns avgPx (average price) or avgPxEp (average price in equity) for positions
+                            try:
+                                # Try avgPx first (average entry price)
+                                avg_px = p.get("avgPx")
+                                if avg_px:
+                                    entry_price = float(avg_px)
+                                else:
+                                    # Fallback to avgPxEp (average price in equity)
+                                    avg_px_ep = p.get("avgPxEp")
+                                    if avg_px_ep:
+                                        entry_price = float(avg_px_ep)
+                                    else:
+                                        # Fallback to last price if available
+                                        last_px = p.get("last")
+                                        entry_price = float(last_px) if last_px else 0.0
+                                
+                                if entry_price > 0:
+                                    exch_entry_price.setdefault(hb_sym, {"long": 0.0, "short": 0.0})[side] = entry_price
+                                    logger.debug(f"[PositionSync] OKX {hb_sym} {side}: entry_price={entry_price} from avgPx={p.get('avgPx')} or avgPxEp={p.get('avgPxEp')}")
+                                else:
+                                    logger.warning(f"[PositionSync] OKX {hb_sym} {side}: Could not extract entry price from position data: {p}")
+                            except Exception as e:
+                                logger.warning(f"[PositionSync] Failed to extract entry price for OKX {hb_sym} {side}: {e}")
+                                # Don't set entry_price, will remain 0.0
 
                 elif isinstance(client, BitgetMixClient) and market_type == "swap":
                     product_type = str(exchange_config.get("product_type") or exchange_config.get("productType") or "USDT-FUTURES")

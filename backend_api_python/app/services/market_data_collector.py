@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 import yfinance as yf
+import pandas as pd
 
 from app.data_sources import DataSourceFactory
 from app.services.kline import KlineService
@@ -552,10 +553,13 @@ class MarketDataCollector:
         return None
     
     def _get_us_fundamental(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """美股基本面 - Finnhub + yfinance"""
+        """
+        美股基本面 - Finnhub + yfinance
+        包括：基础财务指标 + 财报数据（资产负债表、利润表、现金流量表）
+        """
         result = {}
         
-        # Finnhub
+        # === 1. 基础财务指标 (Finnhub) ===
         if self._finnhub_client:
             try:
                 metrics = self._finnhub_client.company_basic_financials(symbol, 'all')
@@ -573,30 +577,192 @@ class MarketDataCollector:
                         'roe': m.get('roeTTM'),
                         'eps': m.get('epsBasicExclExtraItemsTTM'),
                         'revenue_growth': m.get('revenueGrowthTTMYoy'),
+                        'profit_margin': m.get('netProfitMarginTTM'),
+                        'debt_to_equity': m.get('totalDebtToEquityQuarterly'),
+                        'current_ratio': m.get('currentRatioQuarterly'),
+                        'quick_ratio': m.get('quickRatioQuarterly'),
                     })
             except Exception as e:
                 logger.debug(f"Finnhub fundamental failed for {symbol}: {e}")
         
-        # yfinance 补充
-        if not result:
-            try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info or {}
-                result.update({
-                    'pe_ratio': info.get('trailingPE') or info.get('forwardPE'),
-                    'pb_ratio': info.get('priceToBook'),
-                    'market_cap': info.get('marketCap'),
-                    'dividend_yield': info.get('dividendYield'),
-                    'beta': info.get('beta'),
-                    '52w_high': info.get('fiftyTwoWeekHigh'),
-                    '52w_low': info.get('fiftyTwoWeekLow'),
-                    'roe': info.get('returnOnEquity'),
-                    'eps': info.get('trailingEps'),
-                })
-            except Exception as e:
-                logger.debug(f"yfinance fundamental failed for {symbol}: {e}")
+        # === 2. yfinance 补充基础指标 ===
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info or {}
+            
+            # 补充缺失的基础指标
+            if not result.get('pe_ratio'):
+                result['pe_ratio'] = info.get('trailingPE') or info.get('forwardPE')
+            if not result.get('pb_ratio'):
+                result['pb_ratio'] = info.get('priceToBook')
+            if not result.get('market_cap'):
+                result['market_cap'] = info.get('marketCap')
+            if not result.get('dividend_yield'):
+                result['dividend_yield'] = info.get('dividendYield')
+            if not result.get('beta'):
+                result['beta'] = info.get('beta')
+            if not result.get('52w_high'):
+                result['52w_high'] = info.get('fiftyTwoWeekHigh')
+            if not result.get('52w_low'):
+                result['52w_low'] = info.get('fiftyTwoWeekLow')
+            if not result.get('roe'):
+                result['roe'] = info.get('returnOnEquity')
+            if not result.get('eps'):
+                result['eps'] = info.get('trailingEps')
+            
+            # 补充更多财务指标
+            result.update({
+                'revenue': info.get('totalRevenue'),
+                'gross_profit': info.get('grossProfits'),
+                'operating_margin': info.get('operatingMargins'),
+                'profit_margin': result.get('profit_margin') or info.get('profitMargins'),
+                'ebitda': info.get('ebitda'),
+                'debt': info.get('totalDebt'),
+                'cash': info.get('totalCash'),
+                'free_cash_flow': info.get('freeCashflow'),
+                'operating_cash_flow': info.get('operatingCashflow'),
+                'book_value': info.get('bookValue'),
+                'enterprise_value': info.get('enterpriseValue'),
+            })
+        except Exception as e:
+            logger.debug(f"yfinance fundamental failed for {symbol}: {e}")
+        
+        # === 3. 获取财报数据（资产负债表、利润表、现金流量表）===
+        financial_statements = self._get_financial_statements(symbol)
+        if financial_statements:
+            result['financial_statements'] = financial_statements
+        
+        # === 4. 获取盈利报告（Earnings）===
+        earnings_data = self._get_earnings_data(symbol)
+        if earnings_data:
+            result['earnings'] = earnings_data
         
         return result if result else None
+    
+    def _get_financial_statements(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        获取财务报表数据（资产负债表、利润表、现金流量表）
+        
+        使用 yfinance 获取，包含最近几个季度的数据
+        """
+        try:
+            ticker = yf.Ticker(symbol)
+            statements = {}
+            
+            # 资产负债表 (Balance Sheet)
+            try:
+                balance_sheet = ticker.balance_sheet
+                if balance_sheet is not None and not balance_sheet.empty:
+                    # 获取最近4个季度
+                    latest_quarters = balance_sheet.columns[:4] if len(balance_sheet.columns) >= 4 else balance_sheet.columns
+                    statements['balance_sheet'] = {
+                        'latest_date': str(latest_quarters[0]) if len(latest_quarters) > 0 else None,
+                        'total_assets': float(balance_sheet.loc['Total Assets', latest_quarters[0]]) if 'Total Assets' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                        'total_liabilities': float(balance_sheet.loc['Total Liab', latest_quarters[0]]) if 'Total Liab' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                        'total_equity': float(balance_sheet.loc['Stockholders Equity', latest_quarters[0]]) if 'Stockholders Equity' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                        'cash': float(balance_sheet.loc['Cash', latest_quarters[0]]) if 'Cash' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                        'debt': float(balance_sheet.loc['Total Debt', latest_quarters[0]]) if 'Total Debt' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                        'current_assets': float(balance_sheet.loc['Current Assets', latest_quarters[0]]) if 'Current Assets' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                        'current_liabilities': float(balance_sheet.loc['Current Liabilities', latest_quarters[0]]) if 'Current Liabilities' in balance_sheet.index and len(latest_quarters) > 0 else None,
+                    }
+            except Exception as e:
+                logger.debug(f"Balance sheet fetch failed for {symbol}: {e}")
+            
+            # 利润表 (Income Statement)
+            try:
+                income_stmt = ticker.financials
+                if income_stmt is not None and not income_stmt.empty:
+                    latest_quarters = income_stmt.columns[:4] if len(income_stmt.columns) >= 4 else income_stmt.columns
+                    statements['income_statement'] = {
+                        'latest_date': str(latest_quarters[0]) if len(latest_quarters) > 0 else None,
+                        'total_revenue': float(income_stmt.loc['Total Revenue', latest_quarters[0]]) if 'Total Revenue' in income_stmt.index and len(latest_quarters) > 0 else None,
+                        'gross_profit': float(income_stmt.loc['Gross Profit', latest_quarters[0]]) if 'Gross Profit' in income_stmt.index and len(latest_quarters) > 0 else None,
+                        'operating_income': float(income_stmt.loc['Operating Income', latest_quarters[0]]) if 'Operating Income' in income_stmt.index and len(latest_quarters) > 0 else None,
+                        'net_income': float(income_stmt.loc['Net Income', latest_quarters[0]]) if 'Net Income' in income_stmt.index and len(latest_quarters) > 0 else None,
+                        'eps': float(income_stmt.loc['Basic EPS', latest_quarters[0]]) if 'Basic EPS' in income_stmt.index and len(latest_quarters) > 0 else None,
+                    }
+            except Exception as e:
+                logger.debug(f"Income statement fetch failed for {symbol}: {e}")
+            
+            # 现金流量表 (Cash Flow Statement)
+            try:
+                cashflow = ticker.cashflow
+                if cashflow is not None and not cashflow.empty:
+                    latest_quarters = cashflow.columns[:4] if len(cashflow.columns) >= 4 else cashflow.columns
+                    statements['cash_flow'] = {
+                        'latest_date': str(latest_quarters[0]) if len(latest_quarters) > 0 else None,
+                        'operating_cash_flow': float(cashflow.loc['Operating Cash Flow', latest_quarters[0]]) if 'Operating Cash Flow' in cashflow.index and len(latest_quarters) > 0 else None,
+                        'investing_cash_flow': float(cashflow.loc['Capital Expenditure', latest_quarters[0]]) if 'Capital Expenditure' in cashflow.index and len(latest_quarters) > 0 else None,
+                        'financing_cash_flow': float(cashflow.loc['Financing Cash Flow', latest_quarters[0]]) if 'Financing Cash Flow' in cashflow.index and len(latest_quarters) > 0 else None,
+                        'free_cash_flow': float(cashflow.loc['Free Cash Flow', latest_quarters[0]]) if 'Free Cash Flow' in cashflow.index and len(latest_quarters) > 0 else None,
+                    }
+            except Exception as e:
+                logger.debug(f"Cash flow statement fetch failed for {symbol}: {e}")
+            
+            return statements if statements else None
+            
+        except Exception as e:
+            logger.debug(f"Financial statements fetch failed for {symbol}: {e}")
+            return None
+    
+    def _get_earnings_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        获取盈利报告数据（Earnings）
+        
+        包括：历史盈利、盈利预测、盈利日期等
+        """
+        try:
+            ticker = yf.Ticker(symbol)
+            earnings_data = {}
+            
+            # 历史盈利数据
+            try:
+                earnings_history = ticker.earnings_history
+                if earnings_history is not None and not earnings_history.empty:
+                    # 获取最近4个季度
+                    recent_earnings = earnings_history.head(4)
+                    earnings_data['history'] = []
+                    for _, row in recent_earnings.iterrows():
+                        earnings_data['history'].append({
+                            'date': str(row.get('Date', '')),
+                            'eps_actual': float(row.get('EPS Actual', 0)) if row.get('EPS Actual') is not None else None,
+                            'eps_estimate': float(row.get('EPS Estimate', 0)) if row.get('EPS Estimate') is not None else None,
+                            'surprise': float(row.get('Surprise(%)', 0)) if row.get('Surprise(%)') is not None else None,
+                        })
+            except Exception as e:
+                logger.debug(f"Earnings history fetch failed for {symbol}: {e}")
+            
+            # 盈利日历（未来盈利日期）
+            try:
+                earnings_calendar = ticker.calendar
+                if earnings_calendar is not None and not earnings_calendar.empty:
+                    earnings_data['upcoming'] = {
+                        'next_earnings_date': str(earnings_calendar.index[0]) if len(earnings_calendar.index) > 0 else None,
+                        'eps_estimate': float(earnings_calendar.loc[earnings_calendar.index[0], 'Earnings Estimate']) if len(earnings_calendar.index) > 0 and 'Earnings Estimate' in earnings_calendar.columns else None,
+                        'revenue_estimate': float(earnings_calendar.loc[earnings_calendar.index[0], 'Revenue Estimate']) if len(earnings_calendar.index) > 0 and 'Revenue Estimate' in earnings_calendar.columns else None,
+                    }
+            except Exception as e:
+                logger.debug(f"Earnings calendar fetch failed for {symbol}: {e}")
+            
+            # 季度盈利数据
+            try:
+                quarterly_earnings = ticker.quarterly_earnings
+                if quarterly_earnings is not None and not quarterly_earnings.empty:
+                    latest_q = quarterly_earnings.index[0] if len(quarterly_earnings.index) > 0 else None
+                    if latest_q:
+                        earnings_data['quarterly'] = {
+                            'latest_quarter': str(latest_q),
+                            'revenue': float(quarterly_earnings.loc[latest_q, 'Revenue']) if 'Revenue' in quarterly_earnings.columns else None,
+                            'earnings': float(quarterly_earnings.loc[latest_q, 'Earnings']) if 'Earnings' in quarterly_earnings.columns else None,
+                        }
+            except Exception as e:
+                logger.debug(f"Quarterly earnings fetch failed for {symbol}: {e}")
+            
+            return earnings_data if earnings_data else None
+            
+        except Exception as e:
+            logger.debug(f"Earnings data fetch failed for {symbol}: {e}")
+            return None
     
     def _get_crypto_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """加密货币信息 (固定描述为主)"""
