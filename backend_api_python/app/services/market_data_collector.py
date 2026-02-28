@@ -74,6 +74,7 @@ class MarketDataCollector:
         timeframe: str = "1D",
         include_macro: bool = True,
         include_news: bool = True,
+        include_polymarket: bool = True,  # 新增：是否包含预测市场数据
         timeout: int = 30
     ) -> Dict[str, Any]:
         """
@@ -85,6 +86,7 @@ class MarketDataCollector:
             timeframe: K线周期
             include_macro: 是否包含宏观数据
             include_news: 是否包含新闻
+            include_polymarket: 是否包含预测市场数据
             timeout: 总超时时间(秒)
             
         Returns:
@@ -109,6 +111,8 @@ class MarketDataCollector:
             # 情绪
             "news": [],
             "sentiment": {},
+            # 预测市场
+            "polymarket": [],
             # 元数据
             "_meta": {
                 "success_items": [],
@@ -180,6 +184,17 @@ class MarketDataCollector:
             except Exception as e:
                 logger.warning(f"News fetch failed: {e}")
                 data["_meta"]["failed_items"].append("news")
+        
+        # === 阶段4: 预测市场数据 (如果需要) ===
+        if include_polymarket:
+            try:
+                polymarket_events = self._get_polymarket_events(symbol, market)
+                data["polymarket"] = polymarket_events
+                if polymarket_events:
+                    data["_meta"]["success_items"].append("polymarket")
+            except Exception as e:
+                logger.debug(f"Polymarket data fetch failed: {e}")
+                data["_meta"]["failed_items"].append("polymarket")
         
         # 记录总耗时
         data["_meta"]["duration_ms"] = int((time.time() - start_time) * 1000)
@@ -1045,6 +1060,13 @@ class MarketDataCollector:
             search_news = self._get_news_from_search(market, symbol, company_name)
             news_list.extend(search_news)
         
+        # === 4) 获取全球重大事件新闻（地缘政治、战争等） ===
+        # 这些事件会影响所有市场，特别是加密货币
+        global_events = self._get_global_major_events()
+        if global_events:
+            news_list.extend(global_events)
+            logger.info(f"Added {len(global_events)} global major events to news list")
+        
         # 去重（按标题）
         seen_titles = set()
         unique_news = []
@@ -1105,6 +1127,171 @@ class MarketDataCollector:
             logger.debug(f"搜索引擎新闻获取失败: {e}")
         
         return news_list
+    
+    def _get_global_major_events(self) -> List[Dict]:
+        """
+        获取全球重大事件新闻（地缘政治、战争、重大政策等）
+        这些事件会影响所有市场，特别是加密货币
+        
+        Returns:
+            全球重大事件新闻列表
+        """
+        news_list = []
+        
+        try:
+            from app.services.search import get_search_service
+            search_service = get_search_service()
+            
+            if not search_service.is_available:
+                return news_list
+            
+            # 搜索全球重大事件（最近24小时）
+            global_event_queries = [
+                "war conflict breaking news today",
+                "geopolitical crisis latest",
+                "US Iran military news"
+            ]
+            
+            for query in global_event_queries:
+                try:
+                    response = search_service.search_with_fallback(
+                        query=query,
+                        max_results=2,
+                        days=1  # 只搜索最近1天的新闻
+                    )
+                    
+                    if response.success and response.results:
+                        for result in response.results:
+                            # 检查是否是重大事件（包含关键词）
+                            title_lower = result.title.lower()
+                            snippet_lower = (result.snippet or "").lower()
+                            text = f"{title_lower} {snippet_lower}"
+                            
+                            # 重大事件关键词
+                            major_event_keywords = [
+                                "war", "conflict", "military", "attack", "strike", "sanctions",
+                                "geopolitical", "crisis", "tension", "iran", "israel", "russia",
+                                "ukraine", "middle east", "nato", "united states",
+                                "战争", "冲突", "军事", "袭击", "制裁", "地缘政治", "危机"
+                            ]
+                            
+                            if any(keyword in text for keyword in major_event_keywords):
+                                news_list.append({
+                                    "datetime": result.published_date or datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                    "headline": result.title,
+                                    "summary": result.snippet[:300] if result.snippet else '',
+                                    "source": f"全球事件:{result.source}",
+                                    "url": result.url,
+                                    "sentiment": "negative" if any(kw in text for kw in ["war", "conflict", "attack", "战争", "冲突", "袭击"]) else "neutral",
+                                    "is_global_event": True  # 标记为全球事件
+                                })
+                                logger.info(f"Found global major event: {result.title[:60]}")
+                except Exception as e:
+                    logger.debug(f"Failed to search global events with query '{query}': {e}")
+                    continue
+            
+            # 去重
+            seen_titles = set()
+            unique_events = []
+            for item in news_list:
+                title = item.get('headline', '')
+                if title and title not in seen_titles:
+                    seen_titles.add(title)
+                    unique_events.append(item)
+            
+            return unique_events[:5]  # 最多返回5条全球重大事件
+            
+        except Exception as e:
+            logger.debug(f"Failed to get global major events: {e}")
+            return []
+    
+    def _get_polymarket_events(self, symbol: str, market: str) -> List[Dict]:
+        """
+        获取与资产相关的预测市场事件
+        直接调用Polymarket API获取实时数据，不依赖本地数据库
+        
+        Args:
+            symbol: 资产符号
+            market: 市场类型
+            
+        Returns:
+            相关预测市场事件列表
+        """
+        try:
+            from app.data_sources.polymarket import PolymarketDataSource
+            
+            polymarket_source = PolymarketDataSource()
+            
+            # 提取关键词
+            keywords = self._extract_polymarket_keywords(symbol, market)
+            logger.info(f"Extracted Polymarket keywords for {symbol}: {keywords}")
+            
+            # 直接调用API搜索，不使用数据库缓存
+            # 因为AI分析需要最新的、相关的数据，数据库不可能包含所有市场
+            related_markets = []
+            for keyword in keywords:
+                # 使用use_cache=False强制从API获取
+                markets = polymarket_source.search_markets(keyword, limit=5, use_cache=False)
+                logger.info(f"Found {len(markets)} markets for keyword '{keyword}' (from API)")
+                related_markets.extend(markets)
+            
+            # 去重
+            seen = set()
+            result = []
+            for market_data in related_markets:
+                market_id = market_data.get('market_id')
+                if market_id and market_id not in seen:
+                    seen.add(market_id)
+                    result.append({
+                        "market_id": market_id,
+                        "question": market_data.get('question', ''),
+                        "current_probability": market_data.get('current_probability', 50.0),
+                        "volume_24h": market_data.get('volume_24h', 0),
+                        "liquidity": market_data.get('liquidity', 0),
+                        "category": market_data.get('category', 'other'),
+                        "polymarket_url": market_data.get('polymarket_url', f"https://polymarket.com/event/{market_id}")
+                    })
+            
+            logger.info(f"Total {len(result)} unique Polymarket events found for {symbol}")
+            return result
+        except Exception as e:
+            logger.debug(f"Failed to get polymarket events for {symbol}: {e}")
+            return []
+    
+    def _extract_polymarket_keywords(self, symbol: str, market: str) -> List[str]:
+        """提取用于搜索预测市场的关键词"""
+        keywords = []
+        
+        # 基础符号
+        if '/' in symbol:
+            base = symbol.split('/')[0]
+            keywords.append(base)
+        else:
+            keywords.append(symbol)
+        
+        # 加密货币全名映射
+        crypto_names = {
+            'BTC': ['Bitcoin', 'bitcoin'],
+            'ETH': ['Ethereum', 'ethereum'],
+            'SOL': ['Solana', 'solana'],
+            'BNB': ['Binance', 'binance'],
+            'XRP': ['Ripple', 'ripple'],
+            'ADA': ['Cardano', 'cardano'],
+            'DOGE': ['Dogecoin', 'dogecoin'],
+            'AVAX': ['Avalanche', 'avalanche'],
+            'DOT': ['Polkadot', 'polkadot'],
+            'MATIC': ['Polygon', 'polygon']
+        }
+        
+        base_symbol = symbol.split('/')[0] if '/' in symbol else symbol
+        if base_symbol in crypto_names:
+            keywords.extend(crypto_names[base_symbol])
+        
+        # 添加价格相关关键词
+        if market == 'Crypto':
+            keywords.extend(['$100k', '$100000', '100k', 'ETF', 'approval'])
+        
+        return keywords
 
 
 # 全局实例

@@ -46,6 +46,7 @@ class FastAnalysisService:
         2. 基本面: 公司信息、财务数据
         3. 宏观数据: DXY、VIX、TNX、黄金等
         4. 情绪数据: 新闻、市场情绪
+        5. 预测市场: 相关预测市场事件（新增）
         """
         return self.data_collector.collect_all(
             market=market,
@@ -53,6 +54,7 @@ class FastAnalysisService:
             timeframe=timeframe,
             include_macro=True,
             include_news=True,
+            include_polymarket=True,  # 包含预测市场数据
             timeout=30
         )
     
@@ -196,6 +198,19 @@ class FastAnalysisService:
         
         return "\n".join(summaries) if summaries else "No recent news available."
     
+    def _format_polymarket_summary(self, polymarket_events: List[Dict], max_items: int = 3) -> str:
+        """Format prediction market events into a concise summary for the prompt."""
+        if not polymarket_events:
+            return "No related prediction market events found."
+        
+        summaries = []
+        for event in polymarket_events[:max_items]:
+            question = event.get('question', '')
+            prob = event.get('current_probability', 50.0)
+            summaries.append(f"- {question[:80]}: Market probability {prob:.1f}%")
+        
+        return "\n".join(summaries) if summaries else "No related prediction market events found."
+    
     # ==================== Memory Layer ====================
     
     def _get_memory_context(self, market: str, symbol: str, current_indicators: Dict) -> str:
@@ -247,6 +262,7 @@ class FastAnalysisService:
         fundamental = data.get("fundamental") or {}
         company = data.get("company") or {}
         news_summary = self._format_news_summary(data.get("news") or [])
+        polymarket_events = data.get("polymarket") or []
         
         # Language instruction - MUST be enforced strictly
         lang_map = {
@@ -349,22 +365,31 @@ You are CONSERVATIVE and OBJECTIVE. Your analysis must be based on DATA, not spe
    - Consider geopolitical events and their potential impact
    - Evaluate how macro trends affect this specific market/symbol
 3. **News & Event Analysis**: 
+   - **CRITICAL**: Pay special attention to GEOPOLITICAL EVENTS (wars, conflicts, military actions, sanctions)
+   - These events can cause sudden and severe market movements, especially for crypto and global markets
    - Identify BREAKING NEWS or major events that could cause sudden moves
    - Assess news sentiment and its credibility
-   - Consider regulatory changes, partnerships, scandals, etc.
-   - Don't ignore major news just because technical indicators look good
-4. **Fundamental Analysis**: Evaluate valuation, growth, competitive position if data available. If data is insufficient, say so.
-5. **Risk Assessment**: 
+   - Consider regulatory changes, partnerships, scandals, geopolitical tensions, etc.
+   - **DO NOT ignore major geopolitical news** (e.g., US-Iran conflict, Russia-Ukraine war) even if technical indicators look good
+   - Global events like wars can override all technical analysis - treat them as HIGHEST PRIORITY
+4. **Prediction Market Analysis**:
+   - Review related prediction market events and their current probabilities
+   - Prediction markets reflect collective market wisdom and can indicate future price movements
+   - If prediction markets show high probability for bullish events (e.g., "BTC reaches $100k"), consider this as a positive signal
+   - If prediction markets show high probability for bearish events, consider this as a risk factor
+   - Use prediction market probabilities as a sentiment indicator alongside technical analysis
+5. **Fundamental Analysis**: Evaluate valuation, growth, competitive position if data available. If data is insufficient, say so.
+6. **Risk Assessment**: 
    - Explain why the stop loss level is appropriate
    - List ALL significant risks (technical, macro, news, fundamental)
    - Consider tail risks from unexpected events
-6. **Clear Recommendation**: BUY/SELL/HOLD with entry, stop loss (near suggested), take profit (near suggested)
+7. **Clear Recommendation**: BUY/SELL/HOLD with entry, stop loss (near suggested), take profit (near suggested)
    - **BUY**: For long positions when indicators suggest upside
    - **SELL**: For short positions when indicators suggest downside - this is a VALID trading opportunity
    - **HOLD**: Only when signals are truly unclear - DO NOT default to HOLD just to be safe
    - Your decision should reflect the WEIGHTED importance of ALL factors
    - If macro/news factors strongly contradict technical, explain why you prioritize one over the other
-7. **Trading Opportunity Recognition**:
+8. **Trading Opportunity Recognition**:
    - When you see RSI > 60, bearish MACD, downtrend → Give SELL signal (short opportunity)
    - When you see RSI < 40, bullish MACD, uptrend → Give BUY signal (long opportunity)
    - Only choose HOLD when signals are genuinely mixed or unclear
@@ -397,14 +422,16 @@ Output ONLY valid JSON (do NOT include word counts or format hints in your actua
 - Do NOT make up facts or exaggerate. Base everything on the provided data.
 
 📊 OBJECTIVE SCORING SYSTEM (Reference):
-The system will calculate an objective score based on technical indicators, fundamentals, sentiment, and macro factors.
-- Score >= +40: Bullish signal → BUY recommended
-- Score <= -40: Bearish signal → SELL recommended  
-- Score between -40 and +40: Neutral → HOLD recommended
+The system will calculate an objective score based on technical indicators, fundamentals, sentiment (including geopolitical events), and macro factors.
+- Score >= +20: Bullish signal → BUY recommended
+- Score <= -20: Bearish signal → SELL recommended  
+- Score between -20 and +20: Neutral → HOLD recommended (narrow range)
 - Score >= +70: Strong bullish → Strong BUY signal
 - Score <= -70: Strong bearish → Strong SELL signal
-Your decision should align with this objective score when it's significant (>=40 or <=-40).
-When the score is neutral (-40 to +40), you can use your judgment, but still consider giving BUY/SELL if technical indicators are clear."""
+- Geopolitical events (wars, conflicts) are heavily weighted in sentiment score and can cause severe negative scores
+- Macro factors (VIX, DXY, interest rates) are also heavily weighted
+Your decision should align with this objective score when it's significant (>=20 or <=-20).
+When the score is neutral (-20 to +20), you can use your judgment, but still consider giving BUY/SELL if technical indicators are clear."""
 
         # Format indicator data for prompt (ensure safe defaults)
         rsi_data = indicators.get("rsi") or {}
@@ -439,6 +466,9 @@ When the score is neutral (-40 to +40), you can use your judgment, but still con
 📰 MARKET NEWS ({len(data.get('news') or [])} items):
 {news_summary}
 
+🎯 PREDICTION MARKETS ({len(polymarket_events)} related events):
+{self._format_polymarket_summary(polymarket_events)}
+
 💼 FUNDAMENTALS:
 - Company: {company.get('name', data['symbol'])}
 - Industry: {company.get('industry', 'N/A')}
@@ -460,10 +490,12 @@ When the score is neutral (-40 to +40), you can use your judgment, but still con
 {self._format_earnings_data(fundamental.get('earnings', {}))}
 
 IMPORTANT: 
-1. Consider the macro environment (especially DXY, VIX, rates, geopolitical events) when making your recommendation.
-2. Pay attention to BREAKING NEWS and international events that could cause sudden market moves.
-3. For US stocks, analyze financial statements and earnings trends to assess company health.
-4. Provide your analysis now. Remember: all prices must be within 10% of ${current_price}."""
+1. **CRITICAL**: Check for GEOPOLITICAL EVENTS (wars, conflicts, military actions) in the news section. These events have HIGHEST PRIORITY and can override all technical indicators.
+2. Consider the macro environment (especially DXY, VIX, rates, geopolitical events) when making your recommendation.
+3. Pay attention to BREAKING NEWS and international events that could cause sudden market moves. Geopolitical tensions (e.g., US-Iran conflict) can cause severe market volatility.
+4. For US stocks, analyze financial statements and earnings trends to assess company health.
+5. If you see news about wars, conflicts, or major geopolitical events, you MUST mention them in your analysis and adjust your recommendation accordingly.
+6. Provide your analysis now. Remember: all prices must be within 10% of ${current_price}."""
 
         return system_prompt, user_prompt
     
@@ -745,8 +777,8 @@ IMPORTANT:
             llm_decision = analysis.get("decision", "HOLD")
             if llm_decision != score_based_decision:
                 score_abs = abs(objective_score['overall_score'])
-                # 降低阈值，因为现在HOLD区间更小了，±40以上的评分就应该覆盖
-                if score_abs >= 25:  # 如果评分达到±25以上，就覆盖LLM决策（因为阈值是±40）
+                # 降低阈值，因为现在HOLD区间更小了（±20），±15以上的评分就应该覆盖
+                if score_abs >= 15:  # 如果评分达到±15以上，就覆盖LLM决策（因为阈值是±20）
                     logger.warning(f"LLM decision '{llm_decision}' conflicts with score-based decision '{score_based_decision}' (score: {objective_score['overall_score']:.1f}). Overriding to score-based decision.")
                     analysis["decision"] = score_based_decision
                     # Adjust confidence based on score strength
@@ -908,24 +940,50 @@ IMPORTANT:
     def _has_major_news(self, news_data: List[Dict]) -> bool:
         """
         检查是否有重大新闻事件。
-        重大新闻包括：监管变化、重大合作、丑闻、重大政策等。
+        重大新闻包括：监管变化、重大合作、丑闻、重大政策、地缘政治事件等。
         """
         if not news_data:
             return False
         
-        # 检查新闻标题中的关键词
+        # 检查新闻标题中的关键词（扩展了地缘政治相关关键词）
         major_keywords = [
-            "regulation", "regulatory", "ban", "approval", "partnership", "merger", "acquisition",
-            "scandal", "lawsuit", "investigation", "policy", "government", "central bank",
-            "监管", "禁令", "批准", "合作", "合并", "收购", "丑闻", "诉讼", "调查", "政策", "政府", "央行"
+            # 监管和政策
+            "regulation", "regulatory", "ban", "approval", "policy", "government", "central bank",
+            "监管", "禁令", "批准", "政策", "政府", "央行",
+            # 商业事件
+            "partnership", "merger", "acquisition", "scandal", "lawsuit", "investigation",
+            "合作", "合并", "收购", "丑闻", "诉讼", "调查",
+            # 地缘政治事件（新增）
+            "war", "conflict", "military", "attack", "strike", "sanctions", "tension", "crisis",
+            "geopolitical", "iran", "israel", "russia", "ukraine", "china", "taiwan", "north korea",
+            "middle east", "gulf", "nato", "united states", "us", "usa", "america",
+            "战争", "冲突", "军事", "袭击", "打击", "制裁", "紧张", "危机",
+            "地缘政治", "伊朗", "以色列", "俄罗斯", "乌克兰", "中国", "台湾", "朝鲜",
+            "中东", "海湾", "北约", "美国"
         ]
         
-        for news in news_data[:5]:  # 只检查前5条最新新闻
+        for news in news_data[:10]:  # 检查前10条最新新闻（增加检查范围）
             title = (news.get("title") or news.get("headline") or "").lower()
+            summary = (news.get("summary") or "").lower()
             sentiment = news.get("sentiment", "neutral")
             
-            # 如果有重大关键词且情绪强烈（非中性），认为是重大新闻
-            if any(keyword in title for keyword in major_keywords) and sentiment != "neutral":
+            # 检查标题和摘要中是否包含重大关键词
+            text_to_check = f"{title} {summary}"
+            
+            # 地缘政治事件通常很严重，即使情绪是中性也要识别
+            geopolitical_keywords = [
+                "war", "conflict", "military", "attack", "strike", "geopolitical",
+                "战争", "冲突", "军事", "袭击", "打击", "地缘政治"
+            ]
+            
+            # 如果是地缘政治相关，直接认为是重大新闻
+            if any(keyword in text_to_check for keyword in geopolitical_keywords):
+                logger.info(f"Detected major geopolitical event in news: {title[:60]}")
+                return True
+            
+            # 其他重大关键词且情绪强烈（非中性），认为是重大新闻
+            if any(keyword in text_to_check for keyword in major_keywords) and sentiment != "neutral":
+                logger.info(f"Detected major news event: {title[:60]}")
                 return True
         
         return False
@@ -1061,7 +1119,8 @@ IMPORTANT:
                 conflicts.append("MACD bearish")
             
             # 均线趋势向下时不应该BUY（除非有重大利好）
-            if "downtrend" in ma_trend.lower():
+            # 只有当趋势非常强烈时才认为是冲突（避免过于敏感）
+            if "strong_downtrend" in ma_trend.lower() or ("downtrend" in ma_trend.lower() and rsi_value > 50):
                 conflicts.append(f"MA trend: {ma_trend}")
             
             if conflicts:
@@ -1140,12 +1199,13 @@ IMPORTANT:
         macro_score = self._calculate_macro_score(macro, data.get("market", ""))
         
         # 5. 综合评分（加权平均）
-        # 权重：技术40%，基本面25%，情绪20%，宏观15%
+        # 优化权重：技术35%，基本面20%，情绪25%（包含地缘政治），宏观20%（提高宏观权重）
+        # 提高情绪和宏观权重，因为地缘政治和宏观经济因素对市场影响更大
         overall_score = (
-            technical_score * 0.40 +
-            fundamental_score * 0.25 +
-            sentiment_score * 0.20 +
-            macro_score * 0.15
+            technical_score * 0.35 +
+            fundamental_score * 0.20 +
+            sentiment_score * 0.25 +  # 提高情绪权重，包含地缘政治事件
+            macro_score * 0.20  # 提高宏观权重
         )
         
         return {
@@ -1318,16 +1378,49 @@ IMPORTANT:
         return max(-100, min(100, score))
     
     def _calculate_sentiment_score(self, news: List[Dict]) -> float:
-        """计算新闻情绪评分 (-100 to +100)"""
+        """
+        计算新闻情绪评分 (-100 to +100)
+        包含地缘政治事件的特殊处理
+        """
         if not news:
             return 0.0  # 无新闻，中性
         
         positive_count = 0
         negative_count = 0
         neutral_count = 0
+        geopolitical_penalty = 0  # 地缘政治事件惩罚分数
+        geopolitical_count = 0  # 地缘政治事件数量
         
-        for item in news[:10]:  # 只看前10条
+        # 地缘政治关键词
+        geopolitical_keywords = [
+            "war", "conflict", "military", "attack", "strike", "sanctions",
+            "geopolitical", "crisis", "tension", "iran", "israel", "russia",
+            "ukraine", "middle east", "nato", "united states",
+            "战争", "冲突", "军事", "袭击", "制裁", "地缘政治", "危机"
+        ]
+        
+        for item in news[:15]:  # 检查前15条新闻
+            title = (item.get("headline") or item.get("title") or "").lower()
+            summary = (item.get("summary") or "").lower()
+            text = f"{title} {summary}"
             sentiment = item.get("sentiment", "neutral")
+            is_global_event = item.get("is_global_event", False)
+            
+            # 检查是否是地缘政治事件
+            is_geopolitical = is_global_event or any(keyword in text for keyword in geopolitical_keywords)
+            
+            if is_geopolitical:
+                geopolitical_count += 1
+                # 地缘政治事件通常是利空的，给予严重惩罚
+                if any(kw in text for kw in ["war", "conflict", "attack", "strike", "战争", "冲突", "袭击", "打击"]):
+                    geopolitical_penalty -= 50  # 战争/冲突事件严重利空
+                elif any(kw in text for kw in ["sanctions", "crisis", "tension", "制裁", "危机", "紧张"]):
+                    geopolitical_penalty -= 30  # 制裁/危机事件利空
+                else:
+                    geopolitical_penalty -= 20  # 其他地缘政治事件利空
+                logger.info(f"Detected geopolitical event in sentiment scoring: {title[:60]}, penalty: {geopolitical_penalty}")
+            
+            # 统计普通新闻情绪
             if sentiment == "positive":
                 positive_count += 1
             elif sentiment == "negative":
@@ -1336,66 +1429,97 @@ IMPORTANT:
                 neutral_count += 1
         
         total = positive_count + negative_count + neutral_count
-        if total == 0:
-            return 0.0
         
-        # 计算净情绪
-        net_sentiment = (positive_count - negative_count) / total
+        # 计算净情绪（普通新闻）
+        if total > 0:
+            net_sentiment = (positive_count - negative_count) / total
+            base_score = net_sentiment * 60  # 基础情绪分数（-60到+60）
+        else:
+            base_score = 0
         
-        # 映射到-100到+100
-        score = net_sentiment * 100
+        # 地缘政治事件惩罚（如果有地缘政治事件，直接应用惩罚）
+        if geopolitical_count > 0:
+            # 地缘政治事件的影响权重很高，直接叠加惩罚
+            final_score = base_score + geopolitical_penalty
+            logger.info(f"Sentiment score: base={base_score:.1f}, geopolitical_penalty={geopolitical_penalty}, final={final_score:.1f}")
+        else:
+            final_score = base_score
         
-        return max(-100, min(100, score))
+        return max(-100, min(100, final_score))
     
     def _calculate_macro_score(self, macro: Dict, market: str) -> float:
-        """计算宏观环境评分 (-100 to +100)"""
+        """
+        计算宏观环境评分 (-100 to +100)
+        包含VIX、DXY、利率等宏观经济指标
+        """
         if not macro:
             return 0.0  # 无宏观数据，中性
         
         score = 0.0
         factors = 0
         
-        # VIX 评分（恐慌指数）
+        # VIX 评分（恐慌指数）- 权重提高
         vix = macro.get("VIX", {})
         vix_value = vix.get("price", 0)
         if vix_value > 0:
-            if vix_value > 30:
-                vix_score = -30  # 高恐慌，利空
+            if vix_value > 35:
+                vix_score = -50  # 极高恐慌（如战争期间），严重利空
+            elif vix_value > 30:
+                vix_score = -40  # 高恐慌，严重利空
+            elif vix_value > 25:
+                vix_score = -30  # 较高恐慌，利空
             elif vix_value > 20:
-                vix_score = -15
+                vix_score = -15  # 中等恐慌，轻微利空
+            elif vix_value < 12:
+                vix_score = +20  # 低恐慌，利多
             elif vix_value < 15:
-                vix_score = +15  # 低恐慌，利多
+                vix_score = +10  # 较低恐慌，轻微利多
             else:
                 vix_score = 0
             score += vix_score
             factors += 1
         
-        # DXY 评分（美元指数）
+        # DXY 评分（美元指数）- 权重提高
         dxy = macro.get("DXY", {})
         dxy_value = dxy.get("price", 0)
         dxy_change = dxy.get("changePercent", 0)
         if dxy_value > 0:
             # 对于加密货币和商品，强美元通常是利空
             if market in ["Crypto", "Forex", "Futures"]:
-                if dxy_change > 1:
+                if dxy_change > 2:
+                    dxy_score = -30  # 美元大幅走强，严重利空
+                elif dxy_change > 1:
                     dxy_score = -20  # 美元走强，利空
+                elif dxy_change < -2:
+                    dxy_score = +30  # 美元大幅走弱，利多
                 elif dxy_change < -1:
                     dxy_score = +20  # 美元走弱，利多
                 else:
                     dxy_score = 0
             else:
-                dxy_score = 0  # 对股票影响较小
+                # 对股票也有影响，但较小
+                if dxy_change > 2:
+                    dxy_score = -10
+                elif dxy_change < -2:
+                    dxy_score = +10
+                else:
+                    dxy_score = 0
             score += dxy_score
             factors += 1
         
-        # 利率评分（TNX）
+        # 利率评分（TNX）- 权重提高
         tnx = macro.get("TNX", {})
         tnx_change = tnx.get("changePercent", 0)
-        if tnx_change != 0:
+        tnx_value = tnx.get("price", 0)
+        if tnx_change != 0 or tnx_value > 0:
             # 利率上升对成长股和加密货币通常是利空
             if market in ["Crypto", "USStock"]:
-                if tnx_change > 2:
-                    tnx_score = -20  # 利率大幅上升，利空
+                if tnx_change > 3:
+                    tnx_score = -30  # 利率大幅上升，严重利空
+                elif tnx_change > 2:
+                    tnx_score = -20  # 利率上升，利空
+                elif tnx_change < -3:
+                    tnx_score = +30  # 利率大幅下降，利多
                 elif tnx_change < -2:
                     tnx_score = +20  # 利率下降，利多
                 else:
@@ -1405,9 +1529,12 @@ IMPORTANT:
             score += tnx_score
             factors += 1
         
-        # 归一化
+        # 归一化（考虑权重）
         if factors > 0:
-            score = score / factors * 100 / 3  # 最大可能分数是3个因素各30分=90，归一化到100
+            # 最大可能分数：VIX(-50~+20), DXY(-30~+30), TNX(-30~+30) = 约-110到+80
+            # 归一化到-100到+100
+            max_possible = 110  # 最大绝对值
+            score = score / max_possible * 100
         
         return max(-100, min(100, score))
     
@@ -1415,24 +1542,26 @@ IMPORTANT:
         """
         根据客观评分转换为决策
         
-        优化后的阈值（缩小HOLD区间，使决策更明确）：
-        - score >= +40: BUY（利多）
-        - score <= -40: SELL（利空）
-        - -40 < score < +40: HOLD（中性）
+        优化后的阈值（大幅缩小HOLD区间，使决策更明确）：
+        - score >= +20: BUY（利多）
+        - score <= -20: SELL（利空）
+        - -20 < score < +20: HOLD（中性）
         
-        分级决策（可选，用于更细粒度的判断）：
+        分级决策（用于更细粒度的判断）：
         - score >= +70: 强烈BUY
-        - +40 <= score < +70: BUY
-        - +10 < score < +40: 弱利多（倾向于BUY，但可HOLD）
-        - -10 <= score <= +10: 中性HOLD
-        - -40 < score < -10: 弱利空（倾向于SELL，但可HOLD）
-        - -70 < score <= -40: SELL
+        - +40 <= score < +70: 明显BUY
+        - +20 <= score < +40: BUY
+        - +10 < score < +20: 弱利多（倾向于BUY，但可HOLD）
+        - -10 <= score <= +10: 中性HOLD（真正的中性区间）
+        - -20 < score < -10: 弱利空（倾向于SELL，但可HOLD）
+        - -40 < score <= -20: SELL
+        - -70 < score <= -40: 明显SELL
         - score <= -70: 强烈SELL
         """
-        # 使用±40作为主要阈值，缩小HOLD区间
-        if score >= 40:
+        # 使用±20作为主要阈值，大幅缩小HOLD区间
+        if score >= 20:
             return "BUY"
-        elif score <= -40:
+        elif score <= -20:
             return "SELL"
         else:
             return "HOLD"

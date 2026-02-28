@@ -26,6 +26,7 @@ def register_routes(app: Flask):
     from app.routes.fast_analysis import fast_analysis_bp
     from app.routes.billing import billing_bp
     from app.routes.quick_trade import quick_trade_bp
+    from app.routes.polymarket import polymarket_bp
     
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp, url_prefix='/api/auth')   # Auth routes
@@ -47,3 +48,4 @@ def register_routes(app: Flask):
     app.register_blueprint(fast_analysis_bp, url_prefix='/api/fast-analysis')
     app.register_blueprint(billing_bp, url_prefix='/api/billing')
     app.register_blueprint(quick_trade_bp, url_prefix='/api/quick-trade')
+    app.register_blueprint(polymarket_bp, url_prefix='/api/polymarket')

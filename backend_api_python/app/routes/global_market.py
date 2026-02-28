@@ -1837,11 +1837,61 @@ def _analyze_opportunities_forex(opportunities: list):
             })
 
 
+def _analyze_opportunities_polymarket(opportunities: list):
+    """扫描预测市场机会"""
+    try:
+        from app.data_sources.polymarket import PolymarketDataSource
+        from app.services.polymarket_analyzer import PolymarketAnalyzer
+        
+        polymarket_source = PolymarketDataSource()
+        analyzer = PolymarketAnalyzer()
+        
+        # 获取热门市场
+        markets = polymarket_source.get_trending_markets(limit=20)
+        
+        for market in markets:
+            try:
+                # AI分析
+                analysis = analyzer.analyze_market(market['market_id'])
+                
+                if analysis.get('error'):
+                    continue
+                
+                # 只添加高分机会
+                if analysis.get('opportunity_score', 0) > 75:
+                    opportunities.append({
+                        "symbol": market['question'][:50],  # 简化显示
+                        "name": market['question'],
+                        "price": market['current_probability'],
+                        "change_24h": 0,  # 预测市场没有24h涨跌幅概念
+                        "signal": "prediction_opportunity",
+                        "strength": "strong" if analysis.get('opportunity_score', 0) > 85 else "medium",
+                        "reason": f"AI预测概率{analysis.get('ai_predicted_probability', 0):.1f}%，市场概率{market['current_probability']:.1f}%，差异{analysis.get('divergence', 0):.1f}%",
+                        "impact": "bullish" if analysis.get('recommendation') == "YES" else "bearish",
+                        "market": "PredictionMarket",
+                        "market_id": market['market_id'],
+                        "ai_analysis": {
+                            "predicted_probability": analysis.get('ai_predicted_probability', 0),
+                            "recommendation": analysis.get('recommendation', 'HOLD'),
+                            "confidence_score": analysis.get('confidence_score', 0),
+                            "opportunity_score": analysis.get('opportunity_score', 0)
+                        },
+                        "timestamp": int(time.time())
+                    })
+            except Exception as e:
+                logger.debug(f"Failed to analyze polymarket {market.get('market_id')}: {e}")
+                continue
+                
+    except Exception as e:
+        logger.error(f"_analyze_opportunities_polymarket failed: {e}")
+
+
 @global_market_bp.route("/opportunities", methods=["GET"])
 @login_required
 def trading_opportunities():
     """
     Scan for trading opportunities across Crypto, US Stocks, and Forex.
+    Note: Prediction Markets are excluded as they have their own dedicated page.
     Cached for 1 hour. Pass ?force=true to skip cache.
     """
     try:
@@ -1877,6 +1927,9 @@ def trading_opportunities():
             logger.info(f"Trading opportunities: found {forex_count} forex opportunities")
         except Exception as e:
             logger.error(f"Failed to analyze forex opportunities: {e}", exc_info=True)
+
+        # Note: Prediction Markets are excluded from trading opportunities radar
+        # as they have their own dedicated page at /polymarket
 
         # Sort by absolute change descending
         opportunities.sort(key=lambda x: abs(x.get("change_24h", 0)), reverse=True)

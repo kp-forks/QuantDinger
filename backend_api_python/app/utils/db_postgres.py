@@ -167,12 +167,16 @@ class PostgresCursor:
         row = self._cursor.fetchone()
         if row is None:
             return None
-        return dict(row) if row else None
+        # RealDictCursor already returns a dict, so return as-is
+        return row if isinstance(row, dict) else dict(row) if row else None
     
     def fetchall(self) -> List[Dict[str, Any]]:
         """Fetch all rows"""
         rows = self._cursor.fetchall()
-        return [dict(row) for row in rows] if rows else []
+        if not rows:
+            return []
+        # RealDictCursor already returns dicts, so return as-is
+        return [row if isinstance(row, dict) else dict(row) for row in rows]
     
     def close(self):
         """Close cursor"""
@@ -234,7 +238,10 @@ def get_pg_connection():
                 conn.rollback()
             except Exception:
                 pass
-        logger.error(f"PostgreSQL operation error: {e}")
+        # 记录更详细的错误信息
+        error_msg = str(e) if e else repr(e)
+        error_type = type(e).__name__
+        logger.error(f"PostgreSQL operation error ({error_type}): {error_msg}", exc_info=True)
         raise
     finally:
         if conn:
