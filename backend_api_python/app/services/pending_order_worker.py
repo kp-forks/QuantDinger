@@ -204,12 +204,21 @@ class PendingOrderWorker:
             try:
                 sc = load_strategy_configs(int(sid))
                 exec_mode = (sc.get("execution_mode") or "").strip().lower()
-                if exec_mode != "live":
-                    logger.debug(f"[PositionSync] Strategy {sid} skipped: execution_mode='{exec_mode}' (needs 'live')")
+                # 修改：即使signal模式，如果指定了target_strategy_id（策略启动时调用），也要同步
+                # 这样可以清理用户在交易所手动平仓但数据库记录还在的"幽灵持仓"
+                if exec_mode != "live" and not target_strategy_id:
+                    logger.debug(f"[PositionSync] Strategy {sid} skipped: execution_mode='{exec_mode}' (needs 'live' or explicit target)")
                     continue
                 sync_user_id = int(sc.get("user_id") or 1)
                 exchange_config = resolve_exchange_config(sc.get("exchange_config") or {}, user_id=sync_user_id)
                 safe_cfg = safe_exchange_config_for_log(exchange_config)
+                
+                # 检查 exchange_id 是否有效，如果为空或无效则跳过同步（signal模式可能没有配置交易所）
+                exchange_id = str(exchange_config.get("exchange_id") or "").strip().lower()
+                if not exchange_id:
+                    logger.debug(f"[PositionSync] Strategy {sid} skipped: exchange_id is empty (signal mode or no exchange config)")
+                    continue
+                
                 market_type = (sc.get("market_type") or exchange_config.get("market_type") or "swap")
                 market_type = str(market_type or "swap").strip().lower()
                 if market_type in ("futures", "future", "perp", "perpetual"):
@@ -237,7 +246,12 @@ class PendingOrderWorker:
                     except ImportError:
                         pass
 
-                client = create_client(exchange_config, market_type=market_type)
+                # 尝试创建客户端，如果失败则跳过（可能是配置错误）
+                try:
+                    client = create_client(exchange_config, market_type=market_type)
+                except Exception as e:
+                    logger.debug(f"[PositionSync] Strategy {sid} skipped: failed to create client (exchange_id={exchange_id}): {e}")
+                    continue
                 
                 # Build an "exchange snapshot" per symbol+side
                 exch_size: Dict[str, Dict[str, float]] = {}  # {symbol: {long: size, short: size}}

@@ -150,6 +150,12 @@ def restore_running_strategies():
                     logger.info(f"[OK] {strategy_type_name} {strategy_id} restored")
                 else:
                     logger.warning(f"[FAIL] {strategy_type_name} {strategy_id} restore failed (state may be stale)")
+                    # 如果恢复失败，更新数据库状态为stopped，避免策略处于"僵尸"状态
+                    try:
+                        strategy_service.update_strategy_status(strategy_id, 'stopped')
+                        logger.info(f"[FIX] Updated strategy {strategy_id} status to 'stopped' after restore failure")
+                    except Exception as e:
+                        logger.error(f"Failed to update strategy {strategy_id} status after restore failure: {e}")
             except Exception as e:
                 logger.error(f"Error restoring strategy {strategy_id}: {str(e)}")
                 logger.error(traceback.format_exc())

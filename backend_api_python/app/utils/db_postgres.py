@@ -1,7 +1,8 @@
 """
 PostgreSQL Database Connection Utility
 
-Supports multi-user mode with connection pooling and SQLite compatibility layer.
+Supports multi-user mode with connection pooling.
+Provides placeholder conversion for backward compatibility with legacy code.
 """
 import os
 import threading
@@ -116,7 +117,7 @@ def _get_connection_pool():
 
 
 class PostgresCursor:
-    """PostgreSQL cursor wrapper with SQLite placeholder compatibility"""
+    """PostgreSQL cursor wrapper with placeholder conversion for backward compatibility"""
     
     def __init__(self, cursor):
         self._cursor = cursor
@@ -124,13 +125,13 @@ class PostgresCursor:
     
     def _convert_placeholders(self, query: str) -> str:
         """
-        Convert SQLite-style ? placeholders to PostgreSQL %s
-        Also handle some SQL syntax differences
+        Convert ? placeholders to PostgreSQL %s for backward compatibility.
+        Also handle some SQL syntax differences.
         """
         # Replace ? -> %s
         query = query.replace('?', '%s')
         
-        # SQLite: INSERT OR IGNORE -> PostgreSQL: INSERT ... ON CONFLICT DO NOTHING
+        # INSERT OR IGNORE -> PostgreSQL: INSERT ... ON CONFLICT DO NOTHING
         query = query.replace('INSERT OR IGNORE', 'INSERT')
         
         return query

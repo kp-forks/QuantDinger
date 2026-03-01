@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 class PolymarketWorker:
     """Polymarket数据更新和分析后台任务"""
     
-    def __init__(self, update_interval_minutes: int = 30, analysis_cache_minutes: int = 30):
+    def __init__(self, update_interval_minutes: int = 30, analysis_cache_minutes: int = 1440):  # 24小时缓存
         """
         初始化后台任务
         
@@ -112,12 +112,37 @@ class PolymarketWorker:
             markets_list = list(unique_markets.values())
             logger.info(f"Starting batch analysis for {len(markets_list)} markets...")
             
-            # 使用批量分析器，一次性分析所有市场
-            # AI会筛选出最有交易机会的市场（最多20个）
-            analyzed_markets = self.batch_analyzer.batch_analyze_markets(
-                markets_list,
-                max_opportunities=20
-            )
+            # 优化策略：先用规则筛选，只对高价值机会调用LLM
+            # 这样可以大幅减少LLM调用次数，节省token
+            
+            # 1. 先用规则筛选出最有价值的机会（不调用LLM）
+            rule_based_opportunities = []
+            for market in markets_list:
+                prob = market.get('current_probability', 50.0)
+                volume = market.get('volume_24h', 0)
+                divergence = abs(prob - 50.0)
+                
+                # 规则筛选：高交易量 + 明显概率偏差
+                if volume > 5000 and divergence > 8:
+                    rule_based_opportunities.append(market)
+            
+            # 2. 只对规则筛选出的机会调用LLM（最多30个，节省token）
+            if rule_based_opportunities:
+                logger.info(f"Rule-based filtering: {len(rule_based_opportunities)} opportunities, analyzing top 30 with LLM")
+                # 按交易量和概率偏差排序，取前30个
+                rule_based_opportunities.sort(
+                    key=lambda x: (x.get('volume_24h', 0) * abs(x.get('current_probability', 50) - 50)),
+                    reverse=True
+                )
+                top_opportunities = rule_based_opportunities[:30]
+                
+                analyzed_markets = self.batch_analyzer.batch_analyze_markets(
+                    top_opportunities,
+                    max_opportunities=30  # 只分析30个最有价值的机会
+                )
+            else:
+                logger.info("No rule-based opportunities found, skipping LLM analysis")
+                analyzed_markets = []
             
             # 3. 保存分析结果到数据库
             if analyzed_markets:

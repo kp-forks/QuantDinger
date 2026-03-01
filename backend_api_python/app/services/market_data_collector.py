@@ -1146,10 +1146,9 @@ class MarketDataCollector:
                 return news_list
             
             # 搜索全球重大事件（最近24小时）
+            # 优化：减少搜索次数，只搜索最重要的查询
             global_event_queries = [
-                "war conflict breaking news today",
-                "geopolitical crisis latest",
-                "US Iran military news"
+                "war conflict breaking news today"  # 只搜索最重要的查询，减少API调用
             ]
             
             for query in global_event_queries:
@@ -1226,14 +1225,20 @@ class MarketDataCollector:
             keywords = self._extract_polymarket_keywords(symbol, market)
             logger.info(f"Extracted Polymarket keywords for {symbol}: {keywords}")
             
-            # 直接调用API搜索，不使用数据库缓存
-            # 因为AI分析需要最新的、相关的数据，数据库不可能包含所有市场
+            # 优化：使用缓存加速，减少API调用时间
+            # 对于AI分析，使用短期缓存（5分钟）即可，既保证时效性又提升性能
+            # 进一步优化：限制关键词数量，只搜索最重要的关键词（最多2个）
             related_markets = []
-            for keyword in keywords:
-                # 使用use_cache=False强制从API获取
-                markets = polymarket_source.search_markets(keyword, limit=5, use_cache=False)
-                logger.info(f"Found {len(markets)} markets for keyword '{keyword}' (from API)")
-                related_markets.extend(markets)
+            max_keywords = 2  # 最多只搜索2个关键词，减少API调用
+            for keyword in keywords[:max_keywords]:
+                try:
+                    # 使用use_cache=True启用缓存，减少API调用时间
+                    markets = polymarket_source.search_markets(keyword, limit=5, use_cache=True)
+                    logger.info(f"Found {len(markets)} markets for keyword '{keyword}' (cached)")
+                    related_markets.extend(markets)
+                except Exception as e:
+                    logger.warning(f"Failed to search Polymarket for keyword '{keyword}': {e}")
+                    continue
             
             # 去重
             seen = set()
@@ -1271,39 +1276,54 @@ class MarketDataCollector:
             return []
     
     def _extract_polymarket_keywords(self, symbol: str, market: str) -> List[str]:
-        """提取用于搜索预测市场的关键词"""
+        """
+        提取用于搜索预测市场的关键词
+        优化：只保留最重要的关键词，减少API调用次数
+        """
         keywords = []
         
-        # 基础符号
+        # 基础符号（最重要）
         if '/' in symbol:
             base = symbol.split('/')[0]
             keywords.append(base)
         else:
             keywords.append(symbol)
         
-        # 加密货币全名映射
+        # 加密货币全名映射（只保留一个最重要的全名，避免重复）
         crypto_names = {
-            'BTC': ['Bitcoin', 'bitcoin'],
-            'ETH': ['Ethereum', 'ethereum'],
-            'SOL': ['Solana', 'solana'],
-            'BNB': ['Binance', 'binance'],
-            'XRP': ['Ripple', 'ripple'],
-            'ADA': ['Cardano', 'cardano'],
-            'DOGE': ['Dogecoin', 'dogecoin'],
-            'AVAX': ['Avalanche', 'avalanche'],
-            'DOT': ['Polkadot', 'polkadot'],
-            'MATIC': ['Polygon', 'polygon']
+            'BTC': 'Bitcoin',
+            'ETH': 'Ethereum',
+            'SOL': 'Solana',
+            'BNB': 'Binance',
+            'XRP': 'Ripple',
+            'ADA': 'Cardano',
+            'DOGE': 'Dogecoin',
+            'AVAX': 'Avalanche',
+            'DOT': 'Polkadot',
+            'MATIC': 'Polygon'
         }
         
         base_symbol = symbol.split('/')[0] if '/' in symbol else symbol
         if base_symbol in crypto_names:
-            keywords.extend(crypto_names[base_symbol])
+            # 只添加一个全名，避免大小写重复
+            keywords.append(crypto_names[base_symbol])
         
-        # 添加价格相关关键词
-        if market == 'Crypto':
-            keywords.extend(['$100k', '$100000', '100k', 'ETF', 'approval'])
+        # 优化：移除通用关键词（如 '$100k', 'ETF', 'approval'），这些会匹配到很多不相关的市场
+        # 只保留与资产直接相关的关键词，最多2-3个
         
-        return keywords
+        # 去重并限制数量（最多3个关键词）
+        unique_keywords = []
+        seen = set()
+        for kw in keywords:
+            kw_lower = kw.lower()
+            if kw_lower not in seen:
+                seen.add(kw_lower)
+                unique_keywords.append(kw)
+                if len(unique_keywords) >= 3:  # 最多3个关键词
+                    break
+        
+        logger.info(f"Extracted {len(unique_keywords)} Polymarket keywords (optimized from {len(keywords)}): {unique_keywords}")
+        return unique_keywords
 
 
 # 全局实例

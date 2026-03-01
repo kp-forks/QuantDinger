@@ -57,7 +57,7 @@ def _extract_indicator_meta_from_code(code: str) -> Dict[str, str]:
 
 def _row_to_indicator(row: Dict[str, Any], user_id: int) -> Dict[str, Any]:
     """
-    Map SQLite row -> frontend expected indicator shape.
+    Map database row -> frontend expected indicator shape.
 
     Frontend uses:
     - id, name, description, code

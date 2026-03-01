@@ -1334,32 +1334,29 @@ def get_admin_ai_stats():
                 memory_summary = {}
 
             # --- Per-user stats ---
-            user_conditions = []
+            # Build WHERE clause for user search (applied after JOIN)
+            user_where_clause = ""
             user_params = []
             if search:
-                user_conditions.append("(u.username ILIKE ? OR u.nickname ILIKE ? OR u.email ILIKE ?)")
-                like_val = f"%{search}%"
-                user_params.extend([like_val, like_val, like_val])
+                user_where_clause = "WHERE (u.username ILIKE ? OR u.nickname ILIKE ? OR u.email ILIKE ?)"
+                like_val = f"%{search.strip()}%"
+                user_params = [like_val, like_val, like_val]
 
-            user_where = ""
-            if user_conditions:
-                user_where = "WHERE " + " AND ".join(user_conditions)
-
-            # Count distinct users who have analysis records
-            cur.execute(
-                f"""
+            # Count distinct users who have analysis records (matching search criteria)
+            count_sql = f"""
                 SELECT COUNT(DISTINCT t.user_id) AS cnt
                 FROM qd_analysis_tasks t
                 LEFT JOIN qd_users u ON u.id = t.user_id
-                {user_where}
-                """,
-                tuple(user_params)
-            )
-            user_total = cur.fetchone()['cnt']
+                {user_where_clause}
+            """
+            cur.execute(count_sql, tuple(user_params))
+            count_result = cur.fetchone()
+            user_total = count_result['cnt'] if count_result else 0
 
             # Get per-user aggregated stats
-            cur.execute(
-                f"""
+            # Important: Filter by user search criteria AFTER grouping, but we need to apply it in WHERE
+            # Since we're grouping by user fields, we need to filter before GROUP BY
+            stats_sql = f"""
                 SELECT
                     t.user_id,
                     u.username,
@@ -1372,13 +1369,12 @@ def get_admin_ai_stats():
                     MIN(t.created_at) AS first_analysis_at
                 FROM qd_analysis_tasks t
                 LEFT JOIN qd_users u ON u.id = t.user_id
-                {user_where}
+                {user_where_clause}
                 GROUP BY t.user_id, u.username, u.nickname, u.email
                 ORDER BY analysis_count DESC
                 LIMIT ? OFFSET ?
-                """,
-                tuple(user_params) + (page_size, offset)
-            )
+            """
+            cur.execute(stats_sql, tuple(user_params) + (page_size, offset))
             user_rows = cur.fetchall() or []
 
             # Get per-user analysis_memory stats (correct/helpful counts)
@@ -1417,13 +1413,15 @@ def get_admin_ai_stats():
                     memory_stats_map = {}
 
             # Get recent analysis records (last 50)
+            # Ensure we get user info even if user_id is NULL or user doesn't exist
             cur.execute(
                 """
                 SELECT
                     t.id,
                     t.user_id,
-                    u.username,
-                    u.nickname,
+                    COALESCE(u.username, '') AS username,
+                    COALESCE(u.nickname, '') AS nickname,
+                    COALESCE(u.email, '') AS email,
                     t.market,
                     t.symbol,
                     t.model,
@@ -1432,6 +1430,7 @@ def get_admin_ai_stats():
                     t.completed_at
                 FROM qd_analysis_tasks t
                 LEFT JOIN qd_users u ON u.id = t.user_id
+                WHERE t.user_id IS NOT NULL
                 ORDER BY t.created_at DESC
                 LIMIT 50
                 """
@@ -1444,26 +1443,40 @@ def get_admin_ai_stats():
         user_items = []
         for row in user_rows:
             uid = row.get('user_id')
+            if not uid:  # Skip rows with NULL user_id
+                continue
+                
             ms = memory_stats_map.get(uid, {})
             last_at = row.get('last_analysis_at')
             first_at = row.get('first_analysis_at')
-            if hasattr(last_at, 'isoformat'):
+            
+            # Convert datetime to ISO format string if needed
+            if last_at and hasattr(last_at, 'isoformat'):
                 last_at = last_at.isoformat()
-            if hasattr(first_at, 'isoformat'):
+            elif last_at:
+                last_at = str(last_at)
+            else:
+                last_at = None
+                
+            if first_at and hasattr(first_at, 'isoformat'):
                 first_at = first_at.isoformat()
+            elif first_at:
+                first_at = str(first_at)
+            else:
+                first_at = None
 
             user_items.append({
-                'user_id': uid,
-                'username': row.get('username') or '',
-                'nickname': row.get('nickname') or '',
-                'email': row.get('email') or '',
-                'analysis_count': row.get('analysis_count') or 0,
-                'symbol_count': row.get('symbol_count') or 0,
-                'market_count': row.get('market_count') or 0,
-                'correct': ms.get('correct', 0),
-                'incorrect': ms.get('incorrect', 0),
-                'helpful': ms.get('helpful', 0),
-                'not_helpful': ms.get('not_helpful', 0),
+                'user_id': int(uid),
+                'username': str(row.get('username') or ''),
+                'nickname': str(row.get('nickname') or ''),
+                'email': str(row.get('email') or ''),
+                'analysis_count': int(row.get('analysis_count') or 0),
+                'symbol_count': int(row.get('symbol_count') or 0),
+                'market_count': int(row.get('market_count') or 0),
+                'correct': int(ms.get('correct', 0)),
+                'incorrect': int(ms.get('incorrect', 0)),
+                'helpful': int(ms.get('helpful', 0)),
+                'not_helpful': int(ms.get('not_helpful', 0)),
                 'last_analysis_at': last_at,
                 'first_analysis_at': first_at
             })
@@ -1471,22 +1484,38 @@ def get_admin_ai_stats():
         # Build recent records
         recent_items = []
         for row in recent_rows:
+            user_id = row.get('user_id')
+            if not user_id:  # Skip rows with NULL user_id
+                continue
+                
             created_at = row.get('created_at')
             completed_at = row.get('completed_at')
-            if hasattr(created_at, 'isoformat'):
+            
+            # Convert datetime to ISO format string if needed
+            if created_at and hasattr(created_at, 'isoformat'):
                 created_at = created_at.isoformat()
-            if hasattr(completed_at, 'isoformat'):
+            elif created_at:
+                created_at = str(created_at)
+            else:
+                created_at = None
+                
+            if completed_at and hasattr(completed_at, 'isoformat'):
                 completed_at = completed_at.isoformat()
+            elif completed_at:
+                completed_at = str(completed_at)
+            else:
+                completed_at = None
 
             recent_items.append({
-                'id': row['id'],
-                'user_id': row.get('user_id'),
-                'username': row.get('username') or '',
-                'nickname': row.get('nickname') or '',
-                'market': row.get('market') or '',
-                'symbol': row.get('symbol') or '',
-                'model': row.get('model') or '',
-                'status': row.get('status') or '',
+                'id': int(row.get('id') or 0),
+                'user_id': int(user_id),
+                'username': str(row.get('username') or ''),
+                'nickname': str(row.get('nickname') or ''),
+                'email': str(row.get('email') or ''),
+                'market': str(row.get('market') or ''),
+                'symbol': str(row.get('symbol') or ''),
+                'model': str(row.get('model') or ''),
+                'status': str(row.get('status') or ''),
                 'created_at': created_at,
                 'completed_at': completed_at
             })

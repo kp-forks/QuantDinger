@@ -9,7 +9,7 @@
   <p><strong>Vibe Coding Meets Algo Trading</strong></p>
 
   <p>
-    <strong>7 AI Agents · Python Strategies · 10+ Exchanges · Your Server, Your Keys</strong>
+    <strong>7 AI Agents · Python Strategies · 10+ Exchanges · Prediction Markets · Your Server, Your Keys</strong>
   </p>
   <p>
     <i>Describe your trading idea in natural language → AI writes the Python strategy → Backtest → Live trade.<br/>
@@ -25,7 +25,7 @@
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square&logo=apache" alt="License"></a>
-    <img src="https://img.shields.io/badge/Version-2.2.1-orange?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/Version-2.2.3-orange?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/Docker-One%20Click-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
     <img src="https://img.shields.io/badge/Vibe%20Coding-Ready-FF6B6B?style=flat-square&logo=sparkles&logoColor=white" alt="Vibe Coding">
@@ -38,7 +38,7 @@
     <a href="https://x.com/HenryCryption"><img src="https://img.shields.io/badge/X-Follow-000000?style=for-the-badge&logo=x" alt="X"></a>
   </p>
 
-  <sub>🇺🇸 English · 🇨🇳 简体中文 · 🇹🇼 繁體中文 · 🇯🇵 日本語 · 🇰🇷 한국어 · 🇩🇪 Deutsch · 🇫🇷 Français · 🇹🇭 ไทย · 🇻🇳 Tiếng Việt · 🇸🇦 العربية</sub>
+  <sub>🇺🇸 <a href="README.md">English</a> · 🇨🇳 <a href="docs/README_CN.md">简体中文</a> · 🇹🇼 繁體中文 · 🇯🇵 日本語 · 🇰🇷 한국어 · 🇩🇪 Deutsch · 🇫🇷 Français · 🇹🇭 ไทย · 🇻🇳 Tiếng Việt · 🇸🇦 العربية</sub>
 </div>
 
 ---
@@ -139,6 +139,7 @@ BACKEND_PORT=127.0.0.1:5001 # Default: 5000
 | 🐍 **Python-Native** | Full ecosystem (Pandas, NumPy, TA-Lib, scikit-learn) — no proprietary language limits |
 | 📊 **Professional Charts** | K-line charts with Python indicators, real-time visualization |
 | 🌍 **Crypto + Stocks + Forex** | 10+ exchanges, IBKR, MT5 — all in one platform |
+| 📊 **Prediction Markets** | On-demand AI analysis for Polymarket — probability divergence, opportunity scoring |
 | 💰 **Monetization-Ready** | Membership, credits, USDT on-chain payment — built-in |
 | ⚡ **2-Minute Deploy** | `docker-compose up -d` — production-ready, zero build |
 
@@ -209,6 +210,7 @@ Phase 3 (Decision):  🎯 TraderAgent → BUY / SELL / HOLD (with confidence %)
 - **⚡ Quick Trade Panel** — See a signal? One-click to execute. No page switching.
 - **🧠 Memory-Augmented** — Agents learn from past analyses (local RAG, not cloud)
 - **🔌 5+ LLM Providers**: OpenRouter (100+ models), OpenAI, Gemini, DeepSeek, Grok
+- **📊 Polymarket Prediction Markets** — On-demand AI analysis for prediction markets. Input a market link or title → AI analyzes probability divergence, opportunity score, and trading recommendations. Full history tracking and billing integration.
 
 ### 📈 Full Trading Lifecycle
 
@@ -220,6 +222,33 @@ Phase 3 (Decision):  🎯 TraderAgent → BUY / SELL / HOLD (with confidence %)
 | **4. 🔄 Backtest** | Rich metrics + **AI analyzes results & suggests improvements** |
 | **5. 🚀 Execute** | Live trade on 10+ crypto exchanges, IBKR (stocks), MT5 (forex) |
 | **6. 📡 Monitor** | Portfolio tracker, alerts via Telegram/Discord/Email/SMS/Webhook |
+
+### 📊 Polymarket Prediction Market Analysis
+
+> **On-demand AI analysis for prediction markets.** Input a Polymarket link or market title → AI analyzes probability divergence, opportunity score, and provides trading recommendations.
+
+**Features:**
+- **🔍 Smart Search** — Supports market links, slugs, or natural language titles
+- **🤖 AI Probability Prediction** — Compares AI-predicted probability vs market probability
+- **📈 Opportunity Scoring** — Calculates opportunity score based on divergence and confidence
+- **💡 Trading Recommendations** — YES/NO/HOLD with detailed reasoning and key factors
+- **📚 History Tracking** — View all your past analyses with full details in a dedicated history tab
+- **💰 Billing Integration** — Configurable credit consumption per analysis (set via `BILLING_COST_POLYMARKET_DEEP_ANALYSIS`)
+- **🌍 Multi-Language** — AI responses match your frontend language (English/Chinese)
+- **📊 Admin Statistics** — All analyses tracked in user management dashboard
+
+**Usage:**
+```
+1. Navigate to AI Asset Analysis → Prediction Markets tab
+2. Input Polymarket link or market title
+3. AI analyzes and returns:
+   - Market probability vs AI-predicted probability
+   - Divergence analysis
+   - Opportunity score (0-100)
+   - Trading recommendation (YES/NO/HOLD)
+   - Detailed reasoning and key factors
+4. View analysis history anytime
+```
 
 ### 💰 Built-in Monetization
 

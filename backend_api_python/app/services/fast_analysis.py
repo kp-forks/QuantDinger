@@ -55,7 +55,7 @@ class FastAnalysisService:
             include_macro=True,
             include_news=True,
             include_polymarket=True,  # 包含预测市场数据
-            timeout=30
+            timeout=45  # 增加超时时间，确保数据收集完成
         )
     
     def _calculate_indicators(self, kline_data: List[Dict]) -> Dict[str, Any]:
@@ -678,10 +678,16 @@ IMPORTANT:
         """
         start_time = time.time()
         
+        # Get default model if not specified
+        if not model:
+            model = self.llm_service.get_default_model()
+            logger.debug(f"Using default model: {model}")
+        
         result = {
             "market": market,
             "symbol": symbol,
             "language": language,
+            "model": model,  # Include model in result from the start
             "timeframe": timeframe,
             "analysis_time_ms": 0,
             "error": None,
@@ -823,6 +829,8 @@ IMPORTANT:
                 "decision": analysis.get("decision", "HOLD"),
                 "confidence": analysis.get("confidence", 50),
                 "summary": analysis.get("summary", ""),
+                "model": model,  # Model is already set in result initialization
+                "language": language,  # Ensure language is included for task record
                 "detailed_analysis": {
                     "technical": detailed_analysis.get("technical", ""),
                     "fundamental": detailed_analysis.get("fundamental", ""),
@@ -1600,9 +1608,79 @@ IMPORTANT:
             from app.services.analysis_memory import get_analysis_memory
             memory = get_analysis_memory()
             memory_id = memory.store(result, user_id=user_id)
+            
+            # Also save to qd_analysis_tasks for admin statistics
+            self._save_analysis_task(result, user_id=user_id)
+            
             return memory_id
         except Exception as e:
             logger.warning(f"Memory storage failed: {e}")
+            return None
+    
+    def _save_analysis_task(self, result: Dict, user_id: int = None) -> Optional[int]:
+        """
+        Save analysis record to qd_analysis_tasks table for admin statistics.
+        
+        Args:
+            result: Analysis result dictionary
+            user_id: User ID who created this analysis
+            
+        Returns:
+            Task ID or None if failed
+        """
+        try:
+            from app.utils.db import get_db_connection
+            
+            market = result.get("market", "")
+            symbol = result.get("symbol", "")
+            model = result.get("model", "")
+            # If model is empty, get default model
+            if not model:
+                from app.services.llm import LLMService
+                llm_service = LLMService()
+                model = llm_service.get_default_model()
+            language = result.get("language", "en-US")
+            status = "completed" if not result.get("error") else "failed"
+            result_json = json.dumps(result, ensure_ascii=False)
+            error_message = result.get("error", "")
+            
+            if not market or not symbol:
+                logger.warning(f"Cannot save analysis task: missing market or symbol")
+                return None
+            
+            with get_db_connection() as db:
+                cur = db.cursor()
+                # PostgreSQL: Use RETURNING to get the inserted ID
+                cur.execute(
+                    """
+                    INSERT INTO qd_analysis_tasks
+                    (user_id, market, symbol, model, language, status, result_json, error_message, created_at, completed_at)
+                    VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    RETURNING id
+                    """,
+                    (
+                        int(user_id) if user_id else 1,  # Default to user 1 if not provided
+                        str(market),
+                        str(symbol),
+                        str(model) if model else '',
+                        str(language),
+                        str(status),
+                        str(result_json),
+                        str(error_message) if error_message else ''
+                    )
+                )
+                row = cur.fetchone()
+                task_id = row['id'] if row else None
+                db.commit()
+                cur.close()
+                
+                if task_id:
+                    logger.debug(f"Saved analysis task {task_id} for user {user_id}: {market}:{symbol}")
+                return task_id
+                
+        except Exception as e:
+            logger.warning(f"Failed to save analysis task: {e}")
             return None
     
     # ==================== Backward Compatibility ====================

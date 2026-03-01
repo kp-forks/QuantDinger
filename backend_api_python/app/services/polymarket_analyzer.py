@@ -24,7 +24,7 @@ class PolymarketAnalyzer:
         self.data_collector = get_market_data_collector()
         self.polymarket_source = PolymarketDataSource()
     
-    def analyze_market(self, market_id: str, user_id: int = None, use_cache: bool = True) -> Dict:
+    def analyze_market(self, market_id: str, user_id: int = None, use_cache: bool = True, language: str = 'zh-CN', model: str = None) -> Dict:
         """
         分析单个预测市场
         
@@ -32,6 +32,7 @@ class PolymarketAnalyzer:
             market_id: 市场ID
             user_id: 用户ID（可选，用于用户特定分析）
             use_cache: 是否使用缓存的分析结果（默认True）
+            language: 语言设置（'zh-CN' 或 'en-US'），用于生成对应语言的AI分析结果
             
         Returns:
             分析结果字典
@@ -64,7 +65,8 @@ class PolymarketAnalyzer:
                 question=market['question'],
                 current_market_prob=market['current_probability'],
                 related_news=related_news,
-                asset_data=asset_data
+                asset_data=asset_data,
+                language=language
             )
             
             # 5. 计算机会评分
@@ -193,9 +195,12 @@ class PolymarketAnalyzer:
             return []
     
     def _ai_predict_probability(self, question: str, current_market_prob: float,
-                                related_news: List, asset_data: Dict) -> Dict:
+                                related_news: List, asset_data: Dict, language: str = 'zh-CN') -> Dict:
         """使用AI预测事件概率"""
         try:
+            # 根据语言设置构建prompt
+            is_english = language.lower() in ['en', 'en-us', 'en_us']
+            
             # 构建prompt
             news_text = "\n".join([f"- {n.get('title', '')[:100]}" for n in related_news[:5]])
             
@@ -204,7 +209,16 @@ class PolymarketAnalyzer:
                 price_data = asset_data.get('price', {})
                 indicators = asset_data.get('indicators', {})
                 if price_data:
-                    asset_text = f"""
+                    if is_english:
+                        asset_text = f"""
+Related Asset Data:
+- Current Price: {price_data.get('current_price', 'N/A')}
+- 24h Change: {price_data.get('change_24h', 0):.2f}%
+- RSI: {indicators.get('rsi', {}).get('value', 'N/A')}
+- MACD: {indicators.get('macd', {}).get('signal', 'N/A')}
+"""
+                    else:
+                        asset_text = f"""
 相关资产数据：
 - 当前价格: {price_data.get('current_price', 'N/A')}
 - 24h涨跌幅: {price_data.get('change_24h', 0):.2f}%
@@ -212,7 +226,38 @@ class PolymarketAnalyzer:
 - MACD: {indicators.get('macd', {}).get('signal', 'N/A')}
 """
             
-            prompt = f"""分析以下预测市场事件，评估其发生的概率：
+            if is_english:
+                prompt = f"""Analyze the following prediction market event and assess its probability of occurrence:
+
+Question: {question}
+Current Market Probability: {current_market_prob}%
+
+Related News:
+{news_text if news_text else "No related news available"}
+
+{asset_text}
+
+Please analyze based on the following dimensions:
+1. Success rate of similar historical events
+2. Current news and trends
+3. Related asset price movements and technical indicators
+4. Macro environment factors (VIX, DXY, interest rates, etc.)
+5. Market sentiment indicators
+
+Output JSON format:
+{{
+    "predicted_probability": 72.5,  // Your predicted probability (0-100)
+    "confidence": 75.0,  // Confidence level (0-100)
+    "reasoning": "Detailed analysis...",
+    "key_factors": ["Factor 1", "Factor 2"],
+    "risk_factors": ["Risk 1", "Risk 2"]
+}}
+
+IMPORTANT: All text in the JSON response (reasoning, key_factors, risk_factors) must be in English."""
+                
+                system_prompt = "You are a professional market analyst specializing in prediction market analysis. Please objectively assess the probability of events occurring based on the provided data. Respond in English."
+            else:
+                prompt = f"""分析以下预测市场事件，评估其发生的概率：
 
 问题：{question}
 当前市场概率：{current_market_prob}%
@@ -236,13 +281,17 @@ class PolymarketAnalyzer:
     "reasoning": "详细分析...",
     "key_factors": ["因素1", "因素2"],
     "risk_factors": ["风险1", "风险2"]
-}}"""
+}}
+
+重要提示：JSON响应中的所有文本（reasoning、key_factors、risk_factors）必须使用中文。"""
+                
+                system_prompt = "你是一个专业的市场分析师，擅长分析预测市场事件。请基于提供的数据，客观评估事件发生的概率。请使用中文回答。"
             
             # 调用LLM
             messages = [
                 {
                     "role": "system",
-                    "content": "你是一个专业的市场分析师，擅长分析预测市场事件。请基于提供的数据，客观评估事件发生的概率。"
+                    "content": system_prompt
                 },
                 {
                     "role": "user",
@@ -500,11 +549,21 @@ class PolymarketAnalyzer:
         age = (datetime.now() - created_at.replace(tzinfo=None)).total_seconds() / 60
         return age < max_age_minutes
     
-    def _save_analysis_to_db(self, analysis: Dict, user_id: int = None):
-        """保存分析结果到数据库"""
+    def _save_analysis_to_db(self, analysis: Dict, user_id: int = None, language: str = 'en-US', model: str = None):
+        """
+        保存分析结果到数据库
+        
+        Args:
+            analysis: 分析结果字典
+            user_id: 用户ID
+            language: 语言设置
+            model: 使用的模型
+        """
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
+                
+                # 1. 保存到 qd_polymarket_ai_analysis 表（Polymarket专用表）
                 cur.execute("""
                     INSERT INTO qd_polymarket_ai_analysis
                     (market_id, user_id, ai_predicted_probability, market_probability,
@@ -524,8 +583,41 @@ class PolymarketAnalyzer:
                     json.dumps(analysis.get('key_factors', [])),
                     analysis.get('related_assets', [])
                 ))
+                
+                # 2. 同时保存到 qd_analysis_tasks 表（用于管理员统计和统一的历史记录查看）
+                market_info = analysis.get('market', {})
+                market_title = market_info.get('question', '') or market_info.get('title', '') or f"Polymarket Market {analysis['market_id']}"
+                result_json = json.dumps({
+                    'market_id': analysis['market_id'],
+                    'market_title': market_title,
+                    'analysis': analysis,
+                    'market': market_info,
+                    'type': 'polymarket'  # 标记为Polymarket分析
+                }, ensure_ascii=False)
+                
+                cur.execute("""
+                    INSERT INTO qd_analysis_tasks
+                    (user_id, market, symbol, model, language, status, result_json, error_message, created_at, completed_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id
+                """, (
+                    int(user_id) if user_id else 1,
+                    'Polymarket',  # market字段
+                    str(analysis['market_id']),  # symbol字段存储market_id
+                    str(model) if model else '',
+                    str(language),
+                    'completed',
+                    result_json,
+                    ''
+                ))
+                task_row = cur.fetchone()
+                task_id = task_row['id'] if task_row else None
+                
                 db.commit()
                 cur.close()
+                
+                if task_id:
+                    logger.debug(f"Saved Polymarket analysis to both tables: task_id={task_id}, market_id={analysis['market_id']}")
         except Exception as e:
             logger.error(f"Failed to save analysis to DB: {e}")
     
