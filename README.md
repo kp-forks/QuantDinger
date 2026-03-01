@@ -159,12 +159,6 @@ BACKEND_PORT=127.0.0.1:5001 # Default: 5000
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <img src="docs/screenshots/tuopu.png" alt="System Topology" width="90%" style="border-radius: 8px;">
-      <br/><sub>🗺️ System Architecture Overview</sub>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
       <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="90%" style="border-radius: 8px;">
       <br/><sub>📊 Professional Quant Dashboard</sub>
     </td>
