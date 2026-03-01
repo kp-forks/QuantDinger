@@ -145,43 +145,6 @@ BACKEND_PORT=127.0.0.1:5001 # 默认：5000
 
 ---
 
-## 📸 视觉导览 &nbsp;|&nbsp; [📺 观看视频演示](https://youtu.be/HPTVpqL7knM)
-
-<table align="center" width="100%">
-  <tr>
-    <td colspan="2" align="center">
-      <a href="https://youtu.be/HPTVpqL7knM"><img src="docs/screenshots/video_demo.png" alt="Video Demo" width="80%" style="border-radius: 8px;"></a>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
-      <img src="docs/screenshots/tuopu.png" alt="System Topology" width="90%" style="border-radius: 8px;">
-      <br/><sub>🗺️ 系统架构概览</sub>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
-      <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="90%" style="border-radius: 8px;">
-      <br/><sub>📊 专业量化仪表板</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center"><img src="docs/screenshots/ai_analysis1.png" alt="AI Analysis" style="border-radius: 6px;"><br/><sub>🤖 AI深度研究</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/trading_assistant.png" alt="Trading Assistant" style="border-radius: 6px;"><br/><sub>💬 智能交易助手</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/indicator_analysis.png" alt="Indicator Analysis" style="border-radius: 6px;"><br/><sub>📈 指标分析</sub></td>
-    <td align="center"><img src="docs/screenshots/indicator_creat_python_code.png" alt="Code Generation" style="border-radius: 6px;"><br/><sub>🐍 AI策略编码</sub></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><img src="docs/screenshots/portfolio.jpg" alt="Portfolio Monitor" style="border-radius: 6px; max-width: 80%;"><br/><sub>📊 投资组合监控</sub></td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center"><img src="docs/screenshots/polymarket_analysis.png" alt="Polymarket Analysis" style="border-radius: 6px; max-width: 80%;"><br/><sub>📊 Polymarket预测市场分析</sub></td>
-  </tr>
-</table>
-
----
 
 ## ✨ 核心功能
 
@@ -539,7 +502,7 @@ QuantDinger/
   <tr>
     <td align="center" width="50%">
       <a href="https://beinvolved.indiana.edu/organization/quantfiniu" target="_blank">
-        <img src="docs/screenshots/qfs_logo.png" alt="Indiana University QFS" width="280" style="border-radius: 8px;">
+        <img src="screenshots/qfs_logo.png" alt="Indiana University QFS" width="280" style="border-radius: 8px;">
       </a>
       <br/><br/>
       <strong>Quantitative Finance Society (QFS)</strong><br/>
