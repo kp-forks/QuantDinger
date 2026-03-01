@@ -24,6 +24,11 @@
   </p>
 
   <p>
+    <a href="docs/README_CN.md"><img src="https://img.shields.io/badge/🇨🇳-中文版%20README-FF6B6B?style=for-the-badge" alt="中文版"></a>
+    <a href="README.md"><img src="https://img.shields.io/badge/🇺🇸-English%20README-2496ED?style=for-the-badge" alt="English"></a>
+  </p>
+
+  <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square&logo=apache" alt="License"></a>
     <img src="https://img.shields.io/badge/Version-2.2.3-orange?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
