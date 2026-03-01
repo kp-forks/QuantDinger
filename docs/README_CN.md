@@ -9,14 +9,8 @@
   <p><strong>Vibe Coding 遇见算法交易</strong></p>
 
   <p>
-    <strong>7个AI智能体 · Python策略 · 10+交易所 · 预测市场 · 您的服务器，您的密钥</strong>
-  </p>
-  <p>
-    <i>用自然语言描述您的交易想法 → AI编写Python策略 → 回测 → 实盘交易。<br/>
-    无需编程。自托管 — 您的API密钥和策略永远不会离开您的机器。</i>
-  </p>
-
-  <p>
+  <a href="README.md"><strong>🇺🇸 English</strong></a> &nbsp;·&nbsp;
+  <a href="docs/README_CN.md"><strong>🇨🇳 中文</strong></a> &nbsp;·&nbsp;
   <a href="https://ai.quantdinger.com"><strong>🌐 在线演示</strong></a> &nbsp;·&nbsp;
   <a href="https://youtu.be/HPTVpqL7knM"><strong>📺 视频</strong></a> &nbsp;·&nbsp;
   <a href="https://www.quantdinger.com"><strong>💬 社区</strong></a> &nbsp;·&nbsp;
@@ -24,8 +18,11 @@
   </p>
 
   <p>
-    <a href="README.md"><img src="https://img.shields.io/badge/🇺🇸-English%20README-2496ED?style=for-the-badge" alt="English"></a>
-    <a href="docs/README_CN.md"><img src="https://img.shields.io/badge/🇨🇳-中文版%20README-FF6B6B?style=for-the-badge" alt="中文版"></a>
+    <strong>7个AI智能体 · Python策略 · 10+交易所 · 预测市场 · 您的服务器，您的密钥</strong>
+  </p>
+  <p>
+    <i>用自然语言描述您的交易想法 → AI编写Python策略 → 回测 → 实盘交易。<br/>
+    无需编程。自托管 — 您的API密钥和策略永远不会离开您的机器。</i>
   </p>
 
   <p>

@@ -9,14 +9,8 @@
   <p><strong>Vibe Coding Meets Algo Trading</strong></p>
 
   <p>
-    <strong>7 AI Agents · Python Strategies · 10+ Exchanges · Prediction Markets · Your Server, Your Keys</strong>
-  </p>
-  <p>
-    <i>Describe your trading idea in natural language → AI writes the Python strategy → Backtest → Live trade.<br/>
-    Zero coding required. Self-hosted — your API keys and strategies never leave your machine.</i>
-  </p>
-
-  <p>
+  <a href="docs/README_CN.md"><strong>🇨🇳 中文</strong></a> &nbsp;·&nbsp;
+  <a href="README.md"><strong>🇺🇸 English</strong></a> &nbsp;·&nbsp;
   <a href="https://ai.quantdinger.com"><strong>🌐 Live Demo</strong></a> &nbsp;·&nbsp;
   <a href="https://youtu.be/HPTVpqL7knM"><strong>📺 Video</strong></a> &nbsp;·&nbsp;
   <a href="https://www.quantdinger.com"><strong>💬 Community</strong></a> &nbsp;·&nbsp;
@@ -24,8 +18,11 @@
   </p>
 
   <p>
-    <a href="docs/README_CN.md"><img src="https://img.shields.io/badge/🇨🇳-中文版%20README-FF6B6B?style=for-the-badge" alt="中文版"></a>
-    <a href="README.md"><img src="https://img.shields.io/badge/🇺🇸-English%20README-2496ED?style=for-the-badge" alt="English"></a>
+    <strong>7 AI Agents · Python Strategies · 10+ Exchanges · Prediction Markets · Your Server, Your Keys</strong>
+  </p>
+  <p>
+    <i>Describe your trading idea in natural language → AI writes the Python strategy → Backtest → Live trade.<br/>
+    Zero coding required. Self-hosted — your API keys and strategies never leave your machine.</i>
   </p>
 
   <p>
