@@ -895,6 +895,53 @@ def get_strategy_notifications():
         return jsonify({'code': 0, 'msg': str(e), 'data': {'items': []}}), 500
 
 
+@strategy_bp.route('/strategies/notifications/unread-count', methods=['GET'])
+@login_required
+def get_unread_notification_count():
+    """
+    Get unread notification count for the current user.
+    Used by frontend header badge (cap at 99+ on UI).
+    """
+    try:
+        user_id = g.user_id
+
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute("SELECT id FROM qd_strategies_trading WHERE user_id = ?", (user_id,))
+            rows = cur.fetchall() or []
+            user_strategy_ids = [r.get('id') for r in rows if r.get('id')]
+            cur.close()
+
+        where = ["is_read = 0"]
+        args = []
+
+        if user_strategy_ids:
+            placeholders = ",".join(["?"] * len(user_strategy_ids))
+            where.append(f"(strategy_id IN ({placeholders}) OR (strategy_id IS NULL AND user_id = ?))")
+            args.extend(user_strategy_ids)
+            args.append(user_id)
+        else:
+            where.append("strategy_id IS NULL AND user_id = ?")
+            args.append(user_id)
+
+        where_sql = "WHERE " + " AND ".join(where)
+
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute(
+                f"SELECT COUNT(1) AS cnt FROM qd_strategy_notifications {where_sql}",
+                tuple(args),
+            )
+            cnt = int((cur.fetchone() or {}).get("cnt") or 0)
+            cur.close()
+
+        return jsonify({'code': 1, 'msg': 'success', 'data': {'unread': cnt}})
+    except Exception as e:
+        logger.error(f"get_unread_notification_count failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'code': 0, 'msg': str(e), 'data': {'unread': 0}}), 500
+
+
 @strategy_bp.route('/strategies/notifications/read', methods=['POST'])
 @login_required
 def mark_notification_read():

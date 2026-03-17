@@ -379,6 +379,13 @@ def summary():
             )
 
         # Recent trades (best-effort, filtered by user_id)
+        # Also compute all-time trade count for dashboard top cards.
+        with get_db_connection() as db:
+            cur = db.cursor()
+            cur.execute("SELECT COUNT(1) AS cnt FROM qd_strategy_trades WHERE user_id = ?", (user_id,))
+            total_trades_all = int((cur.fetchone() or {}).get("cnt") or 0)
+            cur.close()
+
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -413,6 +420,8 @@ def summary():
 
         # Compute performance statistics with initial capital for proper drawdown calculation
         perf_stats = _compute_performance_stats(recent_trades, initial_capital=total_initial_capital)
+        # For dashboard top card: show all-time total trade count (not limited by LIMIT 500).
+        perf_stats["total_trades"] = int(total_trades_all)
 
         # Compute per-strategy statistics
         strategy_stats = _compute_strategy_stats(recent_trades, strategies)
