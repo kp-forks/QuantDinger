@@ -67,6 +67,11 @@ class AnalysisMemory:
                         scores JSONB,
                         indicators_snapshot JSONB,
                         raw_result JSONB,
+                        consensus_decision VARCHAR(10),
+                        consensus_score DECIMAL(24, 8),
+                        consensus_abs DECIMAL(24, 8),
+                        agreement_ratio DECIMAL(10, 6),
+                        quality_multiplier DECIMAL(10, 6),
                         created_at TIMESTAMP DEFAULT NOW(),
                         validated_at TIMESTAMP,
                         actual_outcome VARCHAR(20),
@@ -95,6 +100,42 @@ class AnalysisMemory:
                             WHERE table_name = 'qd_analysis_memory' AND column_name = 'raw_result'
                         ) THEN
                             ALTER TABLE qd_analysis_memory ADD COLUMN raw_result JSONB;
+                        END IF;
+
+                        -- 添加多周期共识列（如果不存在）
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'qd_analysis_memory' AND column_name = 'consensus_decision'
+                        ) THEN
+                            ALTER TABLE qd_analysis_memory ADD COLUMN consensus_decision VARCHAR(10);
+                        END IF;
+
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'qd_analysis_memory' AND column_name = 'consensus_score'
+                        ) THEN
+                            ALTER TABLE qd_analysis_memory ADD COLUMN consensus_score DECIMAL(24, 8);
+                        END IF;
+
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'qd_analysis_memory' AND column_name = 'consensus_abs'
+                        ) THEN
+                            ALTER TABLE qd_analysis_memory ADD COLUMN consensus_abs DECIMAL(24, 8);
+                        END IF;
+
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'qd_analysis_memory' AND column_name = 'agreement_ratio'
+                        ) THEN
+                            ALTER TABLE qd_analysis_memory ADD COLUMN agreement_ratio DECIMAL(10, 6);
+                        END IF;
+
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'qd_analysis_memory' AND column_name = 'quality_multiplier'
+                        ) THEN
+                            ALTER TABLE qd_analysis_memory ADD COLUMN quality_multiplier DECIMAL(10, 6);
                         END IF;
                     END $$;
                 """)
@@ -150,16 +191,26 @@ class AnalysisMemory:
                 scores = json.dumps(analysis_result.get("scores", {}))
                 indicators = json.dumps(analysis_result.get("indicators", {}))
                 raw = json.dumps(analysis_result)
+
+                consensus = analysis_result.get("consensus") or {}
+                consensus_decision = consensus.get("consensus_decision")
+                consensus_score = consensus.get("consensus_score")
+                consensus_abs = consensus.get("consensus_abs")
+                agreement_ratio = consensus.get("agreement_ratio")
+                quality_multiplier = consensus.get("quality_multiplier")
                 
                 cur.execute("""
                     INSERT INTO qd_analysis_memory (
                         user_id, market, symbol, decision, confidence,
                         price_at_analysis, entry_price, stop_loss, take_profit,
-                        summary, reasons, risks, scores, indicators_snapshot, raw_result
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        summary, reasons, risks, scores, indicators_snapshot, raw_result,
+                        consensus_decision, consensus_score, consensus_abs, agreement_ratio, quality_multiplier
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                              %s, %s, %s, %s, %s)
                     RETURNING id
-                """, (user_id, market, symbol, decision, confidence, price, entry, stop, take, 
-                      summary, reasons, risks, scores, indicators, raw))
+                """, (user_id, market, symbol, decision, confidence, price, entry, stop, take,
+                      summary, reasons, risks, scores, indicators, raw,
+                      consensus_decision, consensus_score, consensus_abs, agreement_ratio, quality_multiplier))
                 
                 # 使用 lastrowid 属性获取 ID（execute 内部已经处理了 RETURNING）
                 memory_id = cur.lastrowid
@@ -511,6 +562,84 @@ class AnalysisMemory:
         stats["accuracy_pct"] = round(accuracy, 2)
         
         logger.info(f"Validation completed: {stats}")
+        return stats
+
+    def validate_unvalidated_older_than(self, min_age_days: int = 7, limit: int = 200) -> Dict[str, Any]:
+        """
+        Best-effort backfill:
+        Validate unvalidated decisions older than `min_age_days`.
+
+        This is used by offline AI calibration so the system can tune itself automatically.
+        """
+        from app.services.market_data_collector import MarketDataCollector
+        collector = MarketDataCollector()
+
+        stats = {
+            "validated": 0,
+            "correct": 0,
+            "incorrect": 0,
+            "errors": 0,
+        }
+
+        try:
+            with get_db_connection() as db:
+                cur = db.cursor()
+                cur.execute(
+                    f"""
+                    SELECT id, market, symbol, decision, price_at_analysis
+                    FROM qd_analysis_memory
+                    WHERE validated_at IS NULL
+                      AND created_at < NOW() - INTERVAL '{int(min_age_days)} days'
+                    LIMIT {int(limit)}
+                    """
+                )
+                rows = cur.fetchall() or []
+
+                for row in rows:
+                    try:
+                        current_price = collector._get_price(row["market"], row["symbol"])
+                        if not current_price or current_price <= 0:
+                            continue
+                        analysis_price = float(row.get("price_at_analysis") or 0.0)
+                        if analysis_price <= 0:
+                            continue
+
+                        return_pct = ((float(current_price) - analysis_price) / analysis_price) * 100.0
+                        decision = str(row.get("decision") or "HOLD")
+
+                        was_correct = False
+                        if decision == "BUY" and return_pct > 2:
+                            was_correct = True
+                        elif decision == "SELL" and return_pct < -2:
+                            was_correct = True
+                        elif decision == "HOLD" and abs(return_pct) <= 5:
+                            was_correct = True
+
+                        cur.execute(
+                            """
+                            UPDATE qd_analysis_memory
+                            SET validated_at = NOW(),
+                                actual_return_pct = %s,
+                                was_correct = %s
+                            WHERE id = %s
+                            """,
+                            (return_pct, was_correct, int(row["id"])),
+                        )
+
+                        stats["validated"] += 1
+                        if was_correct:
+                            stats["correct"] += 1
+                        else:
+                            stats["incorrect"] += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to validate memory {row.get('id')}: {e}", exc_info=True)
+                        stats["errors"] += 1
+
+                db.commit()
+                cur.close()
+        except Exception as e:
+            logger.error(f"validate_unvalidated_older_than failed: {e}", exc_info=True)
+
         return stats
     
     def get_performance_stats(self, market: str = None, symbol: str = None, 

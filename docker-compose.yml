@@ -8,10 +8,12 @@
 #   3. docker-compose up -d --build
 #   4. Open http://localhost:8888
 #
+# Frontend image: multi-stage build from QuantDinger-Vue-src (context = repo root).
+# To refresh static files without Docker: cd QuantDinger-Vue-src && npm run build
+#   && rm -rf ../frontend/dist && cp -R dist ../frontend/dist
+#
 # Note: The container will NOT start if SECRET_KEY is using the default value.
 #       This is a security measure to prevent insecure deployments.
-
-version: '3.8'
 
 services:
   # ========================
@@ -73,12 +75,12 @@ services:
       retries: 3
 
   # ========================
-  # Frontend (Nginx + Pre-built)
+  # Frontend (Nginx + Vue build from QuantDinger-Vue-src)
   # ========================
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     container_name: quantdinger-frontend
     restart: unless-stopped
     ports:

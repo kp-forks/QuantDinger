@@ -33,31 +33,35 @@ html{--antd-wave-shadow-color:#1890ff}
 #nprogress .bar{background:#1890ff}
 #nprogress .peg{-webkit-box-shadow:0 0 10px #1890ff,0 0 5px #1890ff;box-shadow:0 0 10px #1890ff,0 0 5px #1890ff}
 #nprogress .spinner-icon{border-top-color:#1890ff;border-left-color:#1890ff}
-.fast-analysis-report .loading-container .loading-content-pro .loading-header .loading-icon-pro[data-v-110dde64]{color:#1890ff}
-.fast-analysis-report .loading-container .loading-content-pro .progress-wrapper .progress-text[data-v-110dde64]{color:#1890ff}
-.fast-analysis-report .loading-container .loading-content-pro .current-step[data-v-110dde64]{color:#1890ff}
-.fast-analysis-report .loading-container .loading-content-pro .steps-list .step-item.active[data-v-110dde64]{background:#e6f7ff;color:#1890ff}
-.fast-analysis-report .loading-container .loading-content-pro .steps-list .step-item.active .step-dot[data-v-110dde64]{background:#1890ff;-webkit-box-shadow:0 0 0 3px rgba(24,144,255,.2);box-shadow:0 0 0 3px rgba(24,144,255,.2)}
-.fast-analysis-report .result-container .decision-card[data-v-110dde64]{border-left:6px solid #1890ff}
-.fast-analysis-report .result-container .price-info-row .price-card.current[data-v-110dde64]{border-top:3px solid #1890ff}
-.fast-analysis-report .result-container .scores-row .score-item .score-header .anticon[data-v-110dde64]{color:#1890ff}
-.fast-analysis-report .result-container .scores-row .score-item.overall[data-v-110dde64]{background:linear-gradient(135deg,#e6f7ff,#fff);border:1px solid #91d5ff}
-.fast-analysis-report .result-container .detailed-analysis .analysis-card[data-v-110dde64]{border-left:4px solid #1890ff}
-.fast-analysis-report .result-container .detailed-analysis .analysis-card.technical[data-v-110dde64]{border-left-color:#1890ff}
-.fast-analysis-report .result-container .detailed-analysis .analysis-card .analysis-card-header.technical .anticon[data-v-110dde64]{color:#1890ff}
-.fast-analysis-report .result-container .analysis-details .detail-section .detail-list li[data-v-110dde64]:before{color:#1890ff}
-.fast-analysis-report .result-container .indicators-section .section-title .anticon[data-v-110dde64]{color:#1890ff}
-.fast-analysis-report.theme-dark .decision-card[data-v-110dde64]{border-left-color:#1890ff}
-.fast-analysis-report.theme-dark .detailed-analysis .analysis-card.technical[data-v-110dde64]{border-left-color:#1890ff}
-.fast-analysis-report.theme-dark .score-item.overall[data-v-110dde64]{background:linear-gradient(135deg,rgba(24,144,255,.1),#2a2e39);border-color:#1890ff}
-.left-panel .heatmap-box .box-header[data-v-76a3e064] .ant-radio-group .ant-radio-button-wrapper.ant-radio-button-wrapper-checked{background:var(--primary-color,#1890ff);border-color:var(--primary-color,#1890ff)}
-.left-panel .calendar-box .box-header .box-title .anticon[data-v-76a3e064]{color:var(--primary-color,#1890ff)}
-.right-panel .analysis-toolbar .analyze-button[data-v-76a3e064]{background:var(--primary-color,#1890ff);border-color:var(--primary-color,#1890ff)}
-.right-panel .analysis-main .analysis-placeholder .placeholder-content .placeholder-icon[data-v-76a3e064]{color:var(--primary-color,#1890ff)}
-.watchlist-panel .watchlist-list .watchlist-item.active[data-v-76a3e064]{background:#e6f7ff;border:1px solid #91d5ff}
-.ai-analysis-container.theme-dark .watchlist-panel .watchlist-list .watchlist-item.active[data-v-76a3e064]{background:rgba(24,144,255,.1);border-color:#1890ff}
-.ai-analysis-container.theme-dark .watchlist-bar-legacy .stock-chip.active[data-v-76a3e064],.ai-analysis-container.theme-dark .watchlist-bar-legacy .stock-chip[data-v-76a3e064]:hover{border-color:var(--primary-color,#1890ff);background:rgba(24,144,255,.1)}
-.ai-analysis-container.theme-dark .watchlist-bar-compat .stock-chip.active[data-v-76a3e064],.ai-analysis-container.theme-dark .watchlist-bar-compat .stock-chip[data-v-76a3e064]:hover{border-color:var(--primary-color,#1890ff);background:rgba(24,144,255,.1)}
+.fast-analysis-report .loading-container .loading-content-pro .loading-header .loading-icon-pro[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report .loading-container .loading-content-pro .progress-wrapper .progress-text[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report .loading-container .loading-content-pro .current-step[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report .loading-container .loading-content-pro .steps-list .step-item.active[data-v-693144f6]{background:#e6f7ff;color:#1890ff}
+.fast-analysis-report .loading-container .loading-content-pro .steps-list .step-item.active .step-dot[data-v-693144f6]{background:#1890ff;-webkit-box-shadow:0 0 0 3px rgba(24,144,255,.2);box-shadow:0 0 0 3px rgba(24,144,255,.2)}
+.fast-analysis-report .result-container .decision-card[data-v-693144f6]{border-left:6px solid #1890ff}
+.fast-analysis-report .result-container .decision-card .consensus-strip[data-v-693144f6]{background:rgba(24,144,255,.06);border:1px solid rgba(24,144,255,.2)}
+.fast-analysis-report .result-container .decision-card .consensus-strip .consensus-strip-title[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report .result-container .price-info-row .price-card.current[data-v-693144f6]{border-top:3px solid #1890ff}
+.fast-analysis-report .result-container .scores-row .score-item .score-header .anticon[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report .result-container .scores-row .score-item.overall[data-v-693144f6]{background:linear-gradient(135deg,#e6f7ff,#fff);border:1px solid #91d5ff}
+.fast-analysis-report .result-container .detailed-analysis .analysis-card[data-v-693144f6]{border-left:4px solid #1890ff}
+.fast-analysis-report .result-container .detailed-analysis .analysis-card.technical[data-v-693144f6]{border-left-color:#1890ff}
+.fast-analysis-report .result-container .detailed-analysis .analysis-card .analysis-card-header.technical .anticon[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report .result-container .analysis-details .detail-section .detail-list li[data-v-693144f6]:before{color:#1890ff}
+.fast-analysis-report .result-container .indicators-section .section-title .anticon[data-v-693144f6]{color:#1890ff}
+.fast-analysis-report.theme-dark .decision-card[data-v-693144f6]{border-left-color:#1890ff}
+.fast-analysis-report.theme-dark .decision-card .consensus-strip[data-v-693144f6]{background:rgba(24,144,255,.12);border-color:rgba(24,144,255,.35)}
+.fast-analysis-report.theme-dark .decision-card .consensus-strip .consensus-strip-title[data-v-693144f6]{color:#69c0ff}
+.fast-analysis-report.theme-dark .detailed-analysis .analysis-card.technical[data-v-693144f6]{border-left-color:#1890ff}
+.fast-analysis-report.theme-dark .score-item.overall[data-v-693144f6]{background:linear-gradient(135deg,rgba(24,144,255,.1),#2a2e39);border-color:#1890ff}
+.left-panel .heatmap-box .box-header[data-v-41eda137] .ant-radio-group .ant-radio-button-wrapper.ant-radio-button-wrapper-checked{background:var(--primary-color,#1890ff);border-color:var(--primary-color,#1890ff)}
+.left-panel .calendar-box .box-header .box-title .anticon[data-v-41eda137]{color:var(--primary-color,#1890ff)}
+.right-panel .analysis-toolbar .analyze-button[data-v-41eda137]{background:var(--primary-color,#1890ff);border-color:var(--primary-color,#1890ff)}
+.right-panel .analysis-main .analysis-placeholder .placeholder-content .placeholder-icon[data-v-41eda137]{color:var(--primary-color,#1890ff)}
+.watchlist-panel .watchlist-list .watchlist-item.active[data-v-41eda137]{background:#e6f7ff;border:1px solid #91d5ff}
+.ai-analysis-container.theme-dark .watchlist-panel .watchlist-list .watchlist-item.active[data-v-41eda137]{background:rgba(24,144,255,.1);border-color:#1890ff}
+.ai-analysis-container.theme-dark .watchlist-bar-legacy .stock-chip.active[data-v-41eda137],.ai-analysis-container.theme-dark .watchlist-bar-legacy .stock-chip[data-v-41eda137]:hover{border-color:var(--primary-color,#1890ff);background:rgba(24,144,255,.1)}
+.ai-analysis-container.theme-dark .watchlist-bar-compat .stock-chip.active[data-v-41eda137],.ai-analysis-container.theme-dark .watchlist-bar-compat .stock-chip[data-v-41eda137]:hover{border-color:var(--primary-color,#1890ff);background:rgba(24,144,255,.1)}
 .qt-header .qt-header-left .qt-icon[data-v-0d547552]{color:#1890ff}
 .theme-dark[data-v-0d547552] .ant-radio-group .ant-radio-button-wrapper.ant-radio-button-wrapper-checked{background:#1890ff;border-color:#1890ff}
 .theme-dark[data-v-0d547552] .ant-slider-track{background:#1890ff}

@@ -1,0 +1,17 @@
+# Used when build context is the repo root (e.g. frontend image).
+# Backend builds use backend_api_python/.dockerignore with its own context.
+
+.git
+**/.git
+.DS_Store
+
+# Do not send local node_modules / build outputs (Docker runs npm ci + build)
+QuantDinger-Vue-src/node_modules
+QuantDinger-Vue-src/dist
+
+# Pre-built copy used for local nginx tests only — image builds from source
+frontend/dist
+
+# Backend & DB not needed for frontend stage
+backend_api_python
+docker-compose.override.yml

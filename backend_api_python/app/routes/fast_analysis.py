@@ -4,15 +4,44 @@ Fast Analysis API Routes
 New high-performance analysis endpoints that replace the slow multi-agent system.
 """
 from flask import Blueprint, request, jsonify, g
+import threading
+import time
 
 from app.utils.auth import login_required
 from app.utils.logger import get_logger
 from app.services.fast_analysis import get_fast_analysis_service
 from app.services.analysis_memory import get_analysis_memory
+from app.services.billing_service import get_billing_service
 
 logger = get_logger(__name__)
 
 fast_analysis_bp = Blueprint('fast_analysis', __name__)
+
+# In-memory in-flight guard to avoid duplicate analysis charges caused by rapid repeated clicks.
+_analysis_inflight_lock = threading.Lock()
+_analysis_inflight = {}  # key -> expire_ts
+
+
+def _build_inflight_key(user_id: int, market: str, symbol: str, timeframe: str) -> str:
+    return f"{int(user_id)}|{str(market or '').strip().upper()}|{str(symbol or '').strip().upper()}|{str(timeframe or '').strip().upper()}"
+
+
+def _acquire_inflight(key: str, ttl_sec: int = 90) -> bool:
+    now = time.time()
+    with _analysis_inflight_lock:
+        # Cleanup stale entries
+        stale = [k for k, exp in _analysis_inflight.items() if float(exp) <= now]
+        for k in stale[:1024]:
+            _analysis_inflight.pop(k, None)
+        if key in _analysis_inflight and float(_analysis_inflight.get(key) or 0) > now:
+            return False
+        _analysis_inflight[key] = now + int(ttl_sec)
+        return True
+
+
+def _release_inflight(key: str):
+    with _analysis_inflight_lock:
+        _analysis_inflight.pop(key, None)
 
 
 @fast_analysis_bp.route('/analyze', methods=['POST'])
@@ -51,6 +80,58 @@ def analyze():
         
         # Get current user's ID to associate analysis with user
         user_id = getattr(g, 'user_id', None)
+        if not user_id:
+            return jsonify({'code': 0, 'msg': 'Unauthorized', 'data': None}), 401
+
+        inflight_key = _build_inflight_key(user_id, market, symbol, timeframe)
+        if not _acquire_inflight(inflight_key, ttl_sec=90):
+            return jsonify({
+                'code': 0,
+                'msg': 'Analysis already in progress for this symbol/timeframe. Please wait.',
+                'data': {'in_progress': True}
+            }), 429
+
+        # Billing / credits (best-effort, consistent with polymarket deep analysis)
+        credits_charged = 0
+        remaining_credits = None
+        billing_consumed = False
+        billing = None
+        try:
+            billing = get_billing_service()
+            if billing.is_billing_enabled():
+                credits_charged = int(billing.get_feature_cost('ai_analysis') or 0)
+                if credits_charged > 0:
+                    ok, msg = billing.check_and_consume(
+                        user_id=int(user_id),
+                        feature='ai_analysis',
+                        reference_id=f"fast_analysis_{market}:{symbol}:{timeframe}"
+                    )
+                    if not ok:
+                        # Standardize insufficient credits message
+                        if str(msg or "").startswith('insufficient_credits'):
+                            # Format: insufficient_credits:<current>:<cost>
+                            parts = str(msg).split(':')
+                            cur = float(parts[1]) if len(parts) >= 2 else 0.0
+                            req = float(parts[2]) if len(parts) >= 3 else float(credits_charged)
+                            return jsonify({
+                                'code': 0,
+                                'msg': 'Insufficient credits',
+                                'data': {
+                                    'required': req,
+                                    'current': cur,
+                                    'shortage': max(0.0, req - cur),
+                                }
+                            }), 400
+                        return jsonify({'code': 0, 'msg': f'Failed to deduct credits: {msg}', 'data': None}), 500
+                    billing_consumed = True
+                    # Query remaining credits after successful consumption
+                    try:
+                        remaining_credits = float(billing.get_user_credits(int(user_id)))
+                    except Exception:
+                        remaining_credits = None
+        except Exception as e:
+            # Billing failure should not crash analysis by default, but should be visible in logs.
+            logger.warning(f"Billing check failed (skipped): {e}", exc_info=True)
         
         service = get_fast_analysis_service()
         result = service.analyze(
@@ -63,6 +144,18 @@ def analyze():
         )
         
         if result.get('error'):
+            # Best-effort refund if we already charged but analysis failed.
+            if billing_consumed and billing and credits_charged > 0:
+                try:
+                    billing.add_credits(
+                        user_id=int(user_id),
+                        amount=int(credits_charged),
+                        action='refund',
+                        remark=f'Auto refund: fast-analysis failed ({market}:{symbol}:{timeframe})'
+                    )
+                    remaining_credits = float(billing.get_user_credits(int(user_id)))
+                except Exception as re:
+                    logger.error(f"Auto refund failed: {re}", exc_info=True)
             return jsonify({
                 'code': 0,
                 'msg': result['error'],
@@ -75,16 +168,37 @@ def analyze():
         return jsonify({
             'code': 1,
             'msg': 'success',
-            'data': result
+            'data': {
+                **(result or {}),
+                'credits_charged': credits_charged,
+                'remaining_credits': remaining_credits,
+            }
         })
         
     except Exception as e:
+        # Best-effort refund on unexpected error after charge.
+        try:
+            if 'billing_consumed' in locals() and billing_consumed and 'billing' in locals() and billing and credits_charged > 0 and 'user_id' in locals() and user_id:
+                billing.add_credits(
+                    user_id=int(user_id),
+                    amount=int(credits_charged),
+                    action='refund',
+                    remark=f'Auto refund: fast-analysis exception ({market}:{symbol}:{timeframe})'
+                )
+        except Exception:
+            pass
         logger.error(f"Fast analysis API failed: {e}", exc_info=True)
         return jsonify({
             'code': 0,
             'msg': str(e),
             'data': None
         }), 500
+    finally:
+        try:
+            if 'inflight_key' in locals() and inflight_key:
+                _release_inflight(inflight_key)
+        except Exception:
+            pass
 
 
 @fast_analysis_bp.route('/analyze-legacy', methods=['POST'])
@@ -115,6 +229,56 @@ def analyze_legacy():
                 'msg': 'market and symbol are required',
                 'data': None
             }), 400
+
+        # Billing / credits (same behavior as /analyze)
+        user_id = getattr(g, 'user_id', None)
+        if not user_id:
+            return jsonify({'code': 0, 'msg': 'Unauthorized', 'data': None}), 401
+
+        inflight_key = _build_inflight_key(user_id, market, symbol, timeframe)
+        if not _acquire_inflight(inflight_key, ttl_sec=90):
+            return jsonify({
+                'code': 0,
+                'msg': 'Analysis already in progress for this symbol/timeframe. Please wait.',
+                'data': {'in_progress': True}
+            }), 429
+
+        credits_charged = 0
+        remaining_credits = None
+        billing_consumed = False
+        billing = None
+        try:
+            billing = get_billing_service()
+            if billing.is_billing_enabled():
+                credits_charged = int(billing.get_feature_cost('ai_analysis') or 0)
+                if credits_charged > 0:
+                    ok, msg = billing.check_and_consume(
+                        user_id=int(user_id),
+                        feature='ai_analysis',
+                        reference_id=f"fast_analysis_legacy_{market}:{symbol}:{timeframe}"
+                    )
+                    if not ok:
+                        if str(msg or "").startswith('insufficient_credits'):
+                            parts = str(msg).split(':')
+                            cur = float(parts[1]) if len(parts) >= 2 else 0.0
+                            req = float(parts[2]) if len(parts) >= 3 else float(credits_charged)
+                            return jsonify({
+                                'code': 0,
+                                'msg': 'Insufficient credits',
+                                'data': {
+                                    'required': req,
+                                    'current': cur,
+                                    'shortage': max(0.0, req - cur),
+                                }
+                            }), 400
+                        return jsonify({'code': 0, 'msg': f'Failed to deduct credits: {msg}', 'data': None}), 500
+                    billing_consumed = True
+                    try:
+                        remaining_credits = float(billing.get_user_credits(int(user_id)))
+                    except Exception:
+                        remaining_credits = None
+        except Exception as e:
+            logger.warning(f"Billing check failed (skipped): {e}", exc_info=True)
         
         service = get_fast_analysis_service()
         result = service.analyze_legacy_format(
@@ -126,6 +290,17 @@ def analyze_legacy():
         )
         
         if result.get('error'):
+            if billing_consumed and billing and credits_charged > 0:
+                try:
+                    billing.add_credits(
+                        user_id=int(user_id),
+                        amount=int(credits_charged),
+                        action='refund',
+                        remark=f'Auto refund: fast-analysis-legacy failed ({market}:{symbol}:{timeframe})'
+                    )
+                    remaining_credits = float(billing.get_user_credits(int(user_id)))
+                except Exception as re:
+                    logger.error(f"Auto refund failed (legacy): {re}", exc_info=True)
             return jsonify({
                 'code': 0,
                 'msg': result['error'],
@@ -135,16 +310,36 @@ def analyze_legacy():
         return jsonify({
             'code': 1,
             'msg': 'success',
-            'data': result
+            'data': {
+                **(result or {}),
+                'credits_charged': credits_charged,
+                'remaining_credits': remaining_credits,
+            }
         })
         
     except Exception as e:
+        try:
+            if 'billing_consumed' in locals() and billing_consumed and 'billing' in locals() and billing and credits_charged > 0 and 'user_id' in locals() and user_id:
+                billing.add_credits(
+                    user_id=int(user_id),
+                    amount=int(credits_charged),
+                    action='refund',
+                    remark=f'Auto refund: fast-analysis-legacy exception ({market}:{symbol}:{timeframe})'
+                )
+        except Exception:
+            pass
         logger.error(f"Fast analysis legacy API failed: {e}", exc_info=True)
         return jsonify({
             'code': 0,
             'msg': str(e),
             'data': None
         }), 500
+    finally:
+        try:
+            if 'inflight_key' in locals() and inflight_key:
+                _release_inflight(inflight_key)
+        except Exception:
+            pass
 
 
 @fast_analysis_bp.route('/history', methods=['GET'])

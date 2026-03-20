@@ -220,6 +220,14 @@ CONFIG_SCHEMA = {
                 'required': False,
                 'description': 'Custom model list in JSON format for model selector'
             },
+            {
+                'key': 'AI_ANALYSIS_CONSENSUS_TIMEFRAMES',
+                'label': 'Consensus Timeframes',
+                'type': 'text',
+                'default': '1D,4H',
+                'required': False,
+                'description': 'Multi-timeframe consensus for fast AI analysis. Comma-separated, e.g. "1D,4H"'
+            },
         ]
     },
 

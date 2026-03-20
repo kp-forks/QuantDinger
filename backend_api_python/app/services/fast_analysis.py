@@ -9,6 +9,7 @@ Fast Analysis Service 3.0
 4. 单次LLM调用 - 强约束prompt，输出结构化分析
 """
 import json
+import os
 import time
 from typing import Dict, Any, Optional, List
 from decimal import Decimal, ROUND_HALF_UP
@@ -37,7 +38,17 @@ class FastAnalysisService:
     
     # ==================== Data Collection Layer ====================
     
-    def _collect_market_data(self, market: str, symbol: str, timeframe: str = "1D") -> Dict[str, Any]:
+    def _collect_market_data(
+        self,
+        market: str,
+        symbol: str,
+        timeframe: str = "1D",
+        *,
+        include_macro: bool = True,
+        include_news: bool = True,
+        include_polymarket: bool = True,
+        timeout: int = 45,
+    ) -> Dict[str, Any]:
         """
         使用统一的数据采集器收集市场数据
         
@@ -52,10 +63,10 @@ class FastAnalysisService:
             market=market,
             symbol=symbol,
             timeframe=timeframe,
-            include_macro=True,
-            include_news=True,
-            include_polymarket=True,  # 包含预测市场数据
-            timeout=45  # 增加超时时间，确保数据收集完成
+            include_macro=include_macro,
+            include_news=include_news,
+            include_polymarket=include_polymarket,  # 包含预测市场数据
+            timeout=timeout,  # 增加超时时间，确保数据收集完成
         )
     
     def _calculate_indicators(self, kline_data: List[Dict]) -> Dict[str, Any]:
@@ -694,9 +705,148 @@ IMPORTANT:
         }
         
         try:
-            # Phase 1: Data collection (parallel)
+            # Phase 1: Data collection (multi-timeframe for consensus)
             logger.info(f"Fast analysis starting: {market}:{symbol}")
-            data = self._collect_market_data(market, symbol, timeframe)
+
+            # Consensus timeframes:
+            # - 默认：用用户传入的 timeframe 作为主周期，再加一个上层周期（1D/4H）提升稳定性
+            # - 也允许通过 env 覆盖（逗号分隔），例如 AI_ANALYSIS_CONSENSUS_TIMEFRAMES=1D,4H
+            env_tfs = os.getenv("AI_ANALYSIS_CONSENSUS_TIMEFRAMES", "").strip()
+            if env_tfs:
+                consensus_timeframes = [t.strip() for t in env_tfs.split(",") if t.strip()]
+            else:
+                # Heuristic defaults
+                tf0 = (timeframe or "").strip().upper()
+                # Primary first
+                consensus_timeframes = [tf0] if tf0 else [timeframe]
+                # Add 4H/1D depending on primary
+                if tf0 in ("1H", "1HOUR", "60M"):
+                    consensus_timeframes += ["4H", "1D"]
+                elif tf0 in ("4H",):
+                    consensus_timeframes += ["1D"]
+                elif tf0 in ("1D", "1DAY", "D"):
+                    consensus_timeframes += ["4H"]
+                else:
+                    # Generic fallback
+                    consensus_timeframes += ["1D", "4H"]
+                # Dedup keep order
+                seen = set()
+                consensus_timeframes = [x for x in consensus_timeframes if not (x in seen or seen.add(x))]
+
+            primary_tf = (timeframe or "").strip().upper() or "1D"
+            # Always include the primary timeframe in consensus,
+            # even when env overrides timeframes.
+            if primary_tf and primary_tf not in consensus_timeframes:
+                consensus_timeframes = [primary_tf] + list(consensus_timeframes)
+                # De-dup keep order
+                seen = set()
+                consensus_timeframes = [x for x in consensus_timeframes if not (x in seen or seen.add(x))]
+            # Collect primary data including macro/news/polymarket for prompt quality
+            primary_data = self._collect_market_data(
+                market,
+                symbol,
+                primary_tf,
+                include_macro=True,
+                include_news=True,
+                include_polymarket=True,
+            )
+
+            # Collect extra timeframes for objective consensus (technical-only for cost)
+            objective_by_tf: Dict[str, Dict[str, Any]] = {}
+            decision_votes: Dict[str, int] = {"BUY": 0, "SELL": 0, "HOLD": 0}
+            weighted_score_sum = 0.0
+            weighted_score_w_sum = 0.0
+
+            def _extract_current_price(d: Dict[str, Any]) -> Optional[float]:
+                if d.get("price") and d["price"].get("price"):
+                    try:
+                        return float(d["price"]["price"])
+                    except Exception:
+                        return None
+                ind = d.get("indicators") or {}
+                cp = ind.get("current_price")
+                try:
+                    if cp:
+                        return float(cp)
+                except Exception:
+                    pass
+                # fallback to kline close
+                kl = d.get("kline") or []
+                if kl:
+                    try:
+                        return float(kl[-1].get("close") or 0)
+                    except Exception:
+                        return None
+                return None
+
+            logger.info(f"Consensus timeframes: {consensus_timeframes}")
+            for tf in consensus_timeframes:
+                tf_norm = (tf or "").strip().upper()
+                if not tf_norm:
+                    continue
+
+                if tf_norm == primary_tf:
+                    d_tf = primary_data
+                else:
+                    d_tf = self._collect_market_data(
+                        market,
+                        symbol,
+                        tf_norm,
+                        include_macro=False,
+                        include_news=False,
+                        include_polymarket=False,
+                        timeout=25,
+                    )
+
+                current_price_tf = _extract_current_price(d_tf) or 0.0
+                objective = self._calculate_objective_score(d_tf, current_price_tf)
+                overall_score = float(objective.get("overall_score", 0.0) or 0.0)
+                decision = self._score_to_decision(overall_score, market=market)
+                abs_score = abs(overall_score)
+
+                objective_by_tf[tf_norm] = {
+                    "objective_score": objective,
+                    "overall_score": overall_score,
+                    "decision": decision,
+                    "abs_score": abs_score,
+                }
+                decision_votes[decision] = decision_votes.get(decision, 0) + 1
+
+                # Weight by strength so strong cycles dominate
+                w = 1.0 + min(1.5, abs_score / 100.0)
+                weighted_score_sum += overall_score * w
+                weighted_score_w_sum += w
+
+            consensus_score = weighted_score_sum / weighted_score_w_sum if weighted_score_w_sum > 0 else 0.0
+            consensus_decision = self._score_to_decision(consensus_score, market=market)
+            consensus_abs = abs(consensus_score)
+
+            # Agreement factor: how many timeframes support the consensus decision
+            tf_count = max(1, len(objective_by_tf))
+            agreement_cnt = sum(1 for x in objective_by_tf.values() if str(x.get("decision") or "").upper() == consensus_decision)
+            agreement_ratio = agreement_cnt / tf_count
+
+            # Data quality degradation: derive from primary_data meta
+            meta = primary_data.get("_meta") or {}
+            failed_items = set(meta.get("failed_items") or [])
+            quality_multiplier = 1.0
+            if "macro" in failed_items:
+                quality_multiplier *= 0.85
+            if "news" in failed_items:
+                quality_multiplier *= 0.8
+            if "polymarket" in failed_items:
+                quality_multiplier *= 0.9
+            # If indicators missing key sections, reduce confidence more
+            ind = primary_data.get("indicators") or {}
+            if not ind or not ind.get("rsi") or not ind.get("moving_averages"):
+                quality_multiplier *= 0.65
+
+            logger.info(
+                f"Consensus decision={consensus_decision}, score={consensus_score:.2f}, "
+                f"agreement_ratio={agreement_ratio:.2f}, quality_multiplier={quality_multiplier:.2f}"
+            )
+
+            data = primary_data  # keep original variable usage for prompt/LLM input
             
             # Validate we have essential data - with fallback to indicators
             current_price = None
@@ -771,35 +921,69 @@ IMPORTANT:
             llm_time = int((time.time() - llm_start) * 1000)
             logger.info(f"LLM call completed in {llm_time}ms")
             
-            # Phase 4: Calculate objective score and determine decision based on score
+            # Phase 4: Objective score (primary tf) + consensus calibration
             objective_score = self._calculate_objective_score(data, current_price)
-            logger.info(f"Objective score calculated: {objective_score['overall_score']:.1f} (Technical: {objective_score['technical_score']:.1f}, Fundamental: {objective_score['fundamental_score']:.1f}, Sentiment: {objective_score['sentiment_score']:.1f}, Macro: {objective_score['macro_score']:.1f})")
-            
-            # Determine decision based on objective score thresholds
-            score_based_decision = self._score_to_decision(objective_score['overall_score'])
-            logger.info(f"Score-based decision: {score_based_decision} (score: {objective_score['overall_score']:.1f})")
-            
-            # Override LLM decision with score-based decision if they differ significantly
-            llm_decision = analysis.get("decision", "HOLD")
-            if llm_decision != score_based_decision:
-                score_abs = abs(objective_score['overall_score'])
-                # 降低阈值，因为现在HOLD区间更小了（±20），±15以上的评分就应该覆盖
-                if score_abs >= 15:  # 如果评分达到±15以上，就覆盖LLM决策（因为阈值是±20）
-                    logger.warning(f"LLM decision '{llm_decision}' conflicts with score-based decision '{score_based_decision}' (score: {objective_score['overall_score']:.1f}). Overriding to score-based decision.")
-                    analysis["decision"] = score_based_decision
-                    # Adjust confidence based on score strength
-                    # 评分越高，置信度越高（最高95，最低60）
-                    analysis["confidence"] = min(95, max(60, int(50 + score_abs * 0.45)))
-                    # Update summary to mention score-based decision
-                    original_summary = analysis.get("summary", "")
-                    score_level = "强烈" if score_abs >= 70 else "明显" if score_abs >= 40 else "轻微"
-                    analysis["summary"] = f"{original_summary} [基于客观评分系统：综合评分{objective_score['overall_score']:.1f}分（{score_level}{'利多' if objective_score['overall_score'] > 0 else '利空'}），建议{score_based_decision}]"
-                else:
-                    logger.info(f"LLM decision '{llm_decision}' differs from score-based '{score_based_decision}' but score is close to neutral ({objective_score['overall_score']:.1f}), keeping LLM decision")
-            
-            # Add objective scores to analysis
+            logger.info(
+                f"Primary objective score: {objective_score['overall_score']:.1f} "
+                f"(Technical: {objective_score['technical_score']:.1f}, Fundamental: {objective_score['fundamental_score']:.1f}, "
+                f"Sentiment: {objective_score['sentiment_score']:.1f}, Macro: {objective_score['macro_score']:.1f})"
+            )
+
+            score_based_decision = self._score_to_decision(objective_score["overall_score"], market=market)
+            llm_decision = str(analysis.get("decision", "HOLD") or "HOLD").upper()
+
+            # Consensus confidence:
+            consensus_conf = int(max(40, min(98, 50 + consensus_abs * 0.35)))
+            # Agreement boosts, disagreement reduces
+            consensus_conf = int(max(35, min(98, consensus_conf * (0.85 + 0.3 * agreement_ratio))))
+            consensus_conf = int(max(0, min(100, consensus_conf * quality_multiplier)))
+
+            # Decide whether to enforce consensus over LLM / primary-score decision
+            cfg = self._get_ai_calibration(market=market)
+            min_abs_override = float(cfg.get("min_consensus_abs_override") or 15.0)
+            quality_hold_thr = float(cfg.get("quality_hold_threshold") or 0.7)
+
+            if consensus_abs >= min_abs_override:
+                final_decision = consensus_decision
+                if llm_decision != final_decision:
+                    logger.warning(
+                        f"Override: llm_decision={llm_decision}, consensus_decision={final_decision}, "
+                        f"consensus_score={consensus_score:.1f}, consensus_abs={consensus_abs:.1f}"
+                    )
+                analysis["decision"] = final_decision
+                analysis["confidence"] = consensus_conf
+                original_summary = analysis.get("summary", "")
+                level = "强烈" if consensus_abs >= 70 else "明显" if consensus_abs >= 40 else "轻微"
+                analysis["summary"] = (
+                    f"{original_summary} [多周期客观共识：综合评分{consensus_score:.1f}分（"
+                    f"{level}{'利多' if consensus_score > 0 else '利空'}），建议{final_decision}]"
+                )
+            else:
+                # Near-neutral: keep LLM but shrink confidence by quality and enforce HOLD if quality is poor
+                analysis["confidence"] = int(max(0, min(100, int(analysis.get("confidence", 50) or 50) * quality_multiplier)))
+
+                if quality_multiplier < quality_hold_thr:
+                    analysis["decision"] = "HOLD"
+                    analysis["confidence"] = min(int(analysis.get("confidence", 50) or 50), 55)
+
+            # Add objective scores and consensus to analysis
             analysis["objective_score"] = objective_score
             analysis["score_based_decision"] = score_based_decision
+            analysis["objective_scores_by_timeframe"] = {
+                k: {
+                    "overall_score": v.get("overall_score"),
+                    "decision": v.get("decision"),
+                    "abs_score": v.get("abs_score"),
+                }
+                for k, v in objective_by_tf.items()
+            }
+            analysis["consensus"] = {
+                "consensus_score": consensus_score,
+                "consensus_decision": consensus_decision,
+                "consensus_abs": consensus_abs,
+                "agreement_ratio": agreement_ratio,
+                "quality_multiplier": quality_multiplier,
+            }
             
             # Phase 5: Validate and constrain output (pass indicators for decision validation)
             # Check for major news or macro events that could override technical indicators
@@ -815,6 +999,21 @@ IMPORTANT:
                 has_major_news=has_major_news,
                 has_macro_event=has_macro_event
             )
+
+            # Post-validate: adjust position sizing based on quality + agreement
+            try:
+                ps = analysis.get("position_size_pct", 10)
+                ps = int(float(ps or 10))
+                # Lower position size if data is incomplete or multi-timeframe disagreement exists
+                # agreement_ratio in [0..1]
+                agreement_scale = 0.6 + 0.4 * float(agreement_ratio)
+                ps_scaled = ps * float(quality_multiplier) * agreement_scale
+                if str(analysis.get("decision") or "").upper() == "HOLD":
+                    ps_scaled *= 0.25
+                analysis["position_size_pct"] = max(1, min(100, int(round(ps_scaled))))
+            except Exception:
+                # Keep model-provided position_size_pct
+                pass
             
             # Build final result
             total_time = int((time.time() - start_time) * 1000)
@@ -860,6 +1059,7 @@ IMPORTANT:
                     "resistance": data["indicators"].get("levels", {}).get("resistance"),
                 },
                 "indicators": data.get("indicators", {}),
+                "consensus": analysis.get("consensus", {}),
                 "analysis_time_ms": total_time,
                 "llm_time_ms": llm_time,
                 "data_collection_time_ms": data.get("collection_time_ms", 0),
@@ -1207,14 +1407,39 @@ IMPORTANT:
         macro_score = self._calculate_macro_score(macro, data.get("market", ""))
         
         # 5. 综合评分（加权平均）
-        # 优化权重：技术35%，基本面20%，情绪25%（包含地缘政治），宏观20%（提高宏观权重）
-        # 提高情绪和宏观权重，因为地缘政治和宏观经济因素对市场影响更大
-        overall_score = (
-            technical_score * 0.35 +
-            fundamental_score * 0.20 +
-            sentiment_score * 0.25 +  # 提高情绪权重，包含地缘政治事件
-            macro_score * 0.20  # 提高宏观权重
-        )
+        # 优化权重：默认技术35%，基本面20%，情绪25%（包含地缘政治），宏观20%（提高宏观权重）
+        # 但要做“可用信息重加权”：当某些模块缺失（如新闻/宏观没取到），不要用0分去稀释整体强度，
+        # 而是重新归一化权重，让技术信号在缺失时仍可发挥主导作用。
+        market_type = str(data.get("market") or "")
+        fundamental_present = (market_type == "USStock") and bool(fundamental)
+        sentiment_present = bool(news)
+        macro_present = bool(macro)
+        # indicators 一旦成功计算通常就存在，但这里也做一次保护
+        technical_present = bool(indicators)
+
+        weights = {
+            "technical": 0.35,
+            "fundamental": 0.20,
+            "sentiment": 0.25,
+            "macro": 0.20,
+        }
+        present_flags = {
+            "technical": technical_present,
+            "fundamental": fundamental_present,
+            "sentiment": sentiment_present,
+            "macro": macro_present,
+        }
+
+        total_w = sum(w for k, w in weights.items() if present_flags.get(k))
+        if total_w <= 0:
+            overall_score = technical_score
+        else:
+            overall_score = (
+                (technical_score * weights["technical"] if present_flags.get("technical") else 0.0)
+                + (fundamental_score * weights["fundamental"] if present_flags.get("fundamental") else 0.0)
+                + (sentiment_score * weights["sentiment"] if present_flags.get("sentiment") else 0.0)
+                + (macro_score * weights["macro"] if present_flags.get("macro") else 0.0)
+            ) / total_w
         
         return {
             "technical_score": technical_score,
@@ -1223,6 +1448,34 @@ IMPORTANT:
             "macro_score": macro_score,
             "overall_score": overall_score
         }
+
+    def _get_ai_calibration(self, market: str = "Crypto") -> Dict[str, Any]:
+        """
+        Load latest offline calibration thresholds for the given market.
+        Cached briefly to avoid DB load on every request.
+        """
+        # Simple per-process cache
+        now = time.time()
+        if not hasattr(self, "_calibration_cache"):
+            self._calibration_cache = {}
+            self._calibration_cache_ts = {}
+        ttl = int(os.getenv("AI_CALIBRATION_CACHE_TTL_SEC", "300"))
+        key = (market or "").strip() or "Crypto"
+        ts = self._calibration_cache_ts.get(key) or 0.0
+        if ts and (now - float(ts)) < ttl:
+            return self._calibration_cache.get(key) or {}
+
+        try:
+            from app.services.ai_calibration import AICalibrationService
+            svc = AICalibrationService()
+            cfg = svc.get_latest(key)
+        except Exception as e:
+            logger.warning(f"_get_ai_calibration failed (fallback): {e}", exc_info=True)
+            cfg = {}
+
+        self._calibration_cache[key] = cfg
+        self._calibration_cache_ts[key] = now
+        return cfg
     
     def _calculate_technical_score(self, indicators: Dict, price_data: Dict) -> float:
         """计算技术指标评分 (-100 to +100)"""
@@ -1288,6 +1541,94 @@ IMPORTANT:
             change_score = change_24h * 2  # 线性映射
         score += change_score * 0.20
         weight_sum += 0.20
+
+        # ========== 额外技术特征（轻量增强，不改变主体结构） ==========
+        # 这些特征来自 MarketDataCollector._calculate_indicators 的输出：
+        # - price_position: 过去20根K线区间位置 0~100
+        # - volume_ratio: 最新成交量 / 20期均量
+        # - bollinger: BB_upper/BB_lower/BB_width
+        # - volatility: atr, pct
+        extra_score = 0.0
+        extra_weight = 0.0
+
+        # 1) 区间位置：接近区间顶部更偏利空，接近区间底部更偏利多
+        try:
+            pp = float(indicators.get("price_position", 50.0))
+            # 0~100 -> -15~+15 (线性映射，中心50为0)
+            pp_score = (50.0 - pp) * 0.3
+            # 在极端区域增强信号
+            if pp >= 85:
+                pp_score -= 5
+            elif pp <= 15:
+                pp_score += 5
+            extra_score += pp_score
+            extra_weight += 0.20
+        except Exception:
+            pass
+
+        # 2) 布林带触及：突破上轨偏利空，跌破下轨偏利多
+        try:
+            cur_px = float(indicators.get("current_price") or price_data.get("price") or 0.0)
+            bb = indicators.get("bollinger") or {}
+            bb_u = float(bb.get("BB_upper") or 0.0)
+            bb_l = float(bb.get("BB_lower") or 0.0)
+            if cur_px > 0 and bb_u > 0 and bb_l > 0 and bb_u > bb_l:
+                if cur_px >= bb_u:
+                    extra_score += -12
+                    extra_weight += 0.20
+                elif cur_px <= bb_l:
+                    extra_score += +12
+                    extra_weight += 0.20
+                else:
+                    # Within bands: small contribution by relative position
+                    rel = (cur_px - bb_l) / (bb_u - bb_l)  # 0..1
+                    extra_score += (0.5 - float(rel)) * 10
+                    extra_weight += 0.10
+        except Exception:
+            pass
+
+        # 3) 成交量放大：在趋势方向上加分，逆趋势减分（弱信号）
+        try:
+            vr = float(indicators.get("volume_ratio") or 1.0)
+            trend = str(indicators.get("trend") or indicators.get("moving_averages", {}).get("trend") or "").lower()
+            if vr >= 1.8:
+                if "uptrend" in trend:
+                    extra_score += +8
+                    extra_weight += 0.15
+                elif "downtrend" in trend:
+                    extra_score += -8
+                    extra_weight += 0.15
+                else:
+                    # 放量但无趋势：更偏不确定，略微降低（当作偏利空风险）
+                    extra_score += -3
+                    extra_weight += 0.10
+            elif vr <= 0.6:
+                # 缩量：趋势信号可信度下降（轻微回归到0）
+                extra_score += 0
+                extra_weight += 0.05
+        except Exception:
+            pass
+
+        # 4) 高波动：减少强方向自信（用“缩放”形式实现，避免硬反转）
+        try:
+            vol = indicators.get("volatility") or {}
+            vol_pct = float(vol.get("pct") or 0.0)
+            if vol_pct >= 6.0:
+                # 极高波动：把额外分数打折，并轻微把总体拉回0
+                extra_score *= 0.6
+                score *= 0.92
+            elif vol_pct >= 3.5:
+                extra_score *= 0.8
+                score *= 0.96
+        except Exception:
+            pass
+
+        # Combine extra into main score (treat as another component)
+        if extra_weight > 0:
+            # Normalize extra to roughly -100..+100 scale
+            extra_norm = max(-100.0, min(100.0, float(extra_score)))
+            score += extra_norm * 0.15
+            weight_sum += 0.15
         
         # 归一化到-100到+100
         if weight_sum > 0:
@@ -1536,17 +1877,38 @@ IMPORTANT:
                 tnx_score = 0
             score += tnx_score
             factors += 1
+
+        # 恐惧贪婪指数（更适合 Crypto）：极端贪婪偏利空，极端恐惧偏利多（弱信号）
+        try:
+            fg = macro.get("FEAR_GREED", {}) or {}
+            fg_value = float(fg.get("price") or 0.0)
+            if fg_value > 0 and market in ["Crypto"]:
+                if fg_value >= 80:
+                    score += -15
+                    factors += 1
+                elif fg_value >= 65:
+                    score += -8
+                    factors += 1
+                elif fg_value <= 20:
+                    score += +10
+                    factors += 1
+                elif fg_value <= 35:
+                    score += +5
+                    factors += 1
+        except Exception:
+            pass
         
         # 归一化（考虑权重）
         if factors > 0:
             # 最大可能分数：VIX(-50~+20), DXY(-30~+30), TNX(-30~+30) = 约-110到+80
             # 归一化到-100到+100
-            max_possible = 110  # 最大绝对值
+            # 加上 Fear&Greed 的幅度（约 15），给点 buffer
+            max_possible = 125  # 最大绝对值
             score = score / max_possible * 100
         
         return max(-100, min(100, score))
     
-    def _score_to_decision(self, score: float) -> str:
+    def _score_to_decision(self, score: float, *, market: str = "Crypto") -> str:
         """
         根据客观评分转换为决策
         
@@ -1566,10 +1928,13 @@ IMPORTANT:
         - -70 < score <= -40: 明显SELL
         - score <= -70: 强烈SELL
         """
-        # 使用±20作为主要阈值，大幅缩小HOLD区间
-        if score >= 20:
+        cfg = self._get_ai_calibration(market=market)
+        buy_thr = float(cfg.get("buy_threshold") or 20.0)
+        sell_thr = float(cfg.get("sell_threshold") or -20.0)
+
+        if score >= buy_thr:
             return "BUY"
-        elif score <= -20:
+        elif score <= sell_thr:
             return "SELL"
         else:
             return "HOLD"

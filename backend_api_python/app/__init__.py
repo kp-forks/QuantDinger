@@ -273,6 +273,12 @@ def create_app(config_name='default'):
         start_portfolio_monitor()
         start_usdt_order_worker()
         start_polymarket_worker()
+        # Offline calibration to make AI thresholds self-tuning.
+        try:
+            from app.services.ai_calibration import start_ai_calibration_worker
+            start_ai_calibration_worker()
+        except Exception:
+            pass
         restore_running_strategies()
     
     return app
