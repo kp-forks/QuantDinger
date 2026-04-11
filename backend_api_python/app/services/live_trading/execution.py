@@ -347,7 +347,7 @@ def _place_ibkr_order(
     # Place market order
     result = client.place_market_order(
         symbol=symbol,
-        action=action,
+        side=action,
         quantity=amount,
         market_type=market_type,
     )

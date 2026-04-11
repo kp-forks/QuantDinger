@@ -1584,26 +1584,23 @@ class BacktestService:
             'output': {}  # Default empty output
         }
         
-        # 4. Execute code
+        # 4. Execute code (with validation + sandbox)
         try:
-            import builtins
-            def safe_import(name, *args, **kwargs):
-                allowed = ['numpy', 'pandas', 'math', 'json', 'datetime', 'time']
-                if name in allowed or name.split('.')[0] in allowed:
-                    return builtins.__import__(name, *args, **kwargs)
-                raise ImportError(f"Import not allowed: {name}")
-            
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
-                           if not k.startswith('_') and k not in ['eval', 'exec', 'compile', 'open', 'input', 'exit']}
-            safe_builtins['__import__'] = safe_import
-            
+            from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
+
             exec_env = local_vars.copy()
-            exec_env['__builtins__'] = safe_builtins
-            
-            exec(code, exec_env)
-            
+            exec_env['__builtins__'] = build_safe_builtins()
+
+            exec_result = safe_exec_with_validation(
+                code=code,
+                exec_globals=exec_env,
+                timeout=60,
+            )
+            if not exec_result['success']:
+                return {"error": exec_result['error']}
+
             return exec_env.get('output', {})
-            
+
         except Exception as e:
             logger.error(f"Strategy execution failed: {e}")
             logger.error(traceback.format_exc())
@@ -1858,54 +1855,16 @@ class BacktestService:
             # Add technical indicator functions
             local_vars.update(self._get_indicator_functions())
             
-            # Add safe builtins (keep full builtins to support lambda etc.)
-            # but remove dangerous functions like eval, exec, open etc.
-            import builtins
-            
-            # Create restricted __import__ that only allows safe modules
-            def safe_import(name, *args, **kwargs):
-                """Only allow importing numpy, pandas, math, json etc."""
-                allowed_modules = ['numpy', 'pandas', 'math', 'json', 'datetime', 'time']
-                if name in allowed_modules or name.split('.')[0] in allowed_modules:
-                    return builtins.__import__(name, *args, **kwargs)
-                raise ImportError(f"Import not allowed: {name}")
-            
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
-                           if not k.startswith('_') and k not in [
-                               'eval', 'exec', 'compile', 'open', 'input',
-                               'help', 'exit', 'quit',
-                               'copyright', 'credits', 'license'
-                           ]}
-            
-            # Add restricted __import__
-            safe_builtins['__import__'] = safe_import
-            
-            # Create unified execution environment (globals and locals use same dict)
-            # This allows functions to access np, pd etc.
+            from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
+
             exec_env = local_vars.copy()
-            exec_env['__builtins__'] = safe_builtins
-            
-            # Pre-execute import statements to ensure np and pd are available
-            pre_import_code = """
-import numpy as np
-import pandas as pd
-"""
-            exec(pre_import_code, exec_env)
-            
-            # Security check: validate code doesn't contain dangerous operations
-            from app.utils.safe_exec import validate_code_safety
-            is_safe, error_msg = validate_code_safety(code)
-            if not is_safe:
-                logger.error(f"Backtest code security check failed: {error_msg}")
-                raise ValueError(f"Code contains unsafe operations: {error_msg}")
-            
-            # Execute user code safely (with timeout)
-            from app.utils.safe_exec import safe_exec_code
-            exec_result = safe_exec_code(
+            exec_env['__builtins__'] = build_safe_builtins()
+
+            exec_result = safe_exec_with_validation(
                 code=code,
                 exec_globals=exec_env,
                 exec_locals=exec_env,
-                timeout=60  # Backtest allows longer time (60 seconds)
+                timeout=60,
             )
             
             if not exec_result['success']:
@@ -2118,36 +2077,20 @@ import pandas as pd
                 self._orders.append({'action': 'close'})
 
         try:
-            import builtins
-
-            def safe_import(name, *args, **kwargs):
-                allowed_modules = ['numpy', 'pandas', 'math', 'json', 'datetime', 'time']
-                if name in allowed_modules or name.split('.')[0] in allowed_modules:
-                    return builtins.__import__(name, *args, **kwargs)
-                raise ImportError(f"Import not allowed: {name}")
-
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
-                             if not k.startswith('_') and k not in ['eval', 'exec', 'compile', 'open', 'input', 'help', 'exit', 'quit']}
-            safe_builtins['__import__'] = safe_import
+            from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
 
             ctx = ScriptBacktestContext(df_exec, float(runtime.get('initial_capital') or 10000))
             exec_env = {
-                '__builtins__': safe_builtins,
+                '__builtins__': build_safe_builtins(),
                 'np': np,
                 'pd': pd,
             }
 
-            from app.utils.safe_exec import validate_code_safety
-            is_safe, error_msg = validate_code_safety(code)
-            if not is_safe:
-                raise ValueError(f"Code contains unsafe operations: {error_msg}")
-
-            from app.utils.safe_exec import safe_exec_code
-            exec_result = safe_exec_code(
+            exec_result = safe_exec_with_validation(
                 code=code,
                 exec_globals=exec_env,
                 exec_locals=exec_env,
-                timeout=60
+                timeout=60,
             )
             if not exec_result['success']:
                 raise RuntimeError(f"Code execution failed: {exec_result['error']}")

@@ -593,6 +593,10 @@ class TradingExecutor:
             ts_i = int(closed_ts.timestamp())
         except Exception:
             ts_i = int(time.time())
+
+        bot_type = (trading_config or {}).get('bot_type', '')
+        is_grid_bot = bot_type in ('grid', 'dca')
+
         out: List[Dict[str, Any]] = []
         trig = float(bar_close or 0)
         for order in list(ctx._orders or []):
@@ -619,28 +623,48 @@ class TradingExecutor:
                     ctx.position.clear_position()
                 continue
             if action == 'buy':
-                if ctx.position < 0:
-                    out.append({'type': 'close_short', 'trigger_price': order_price or trig, 'position_size': 0, 'timestamp': ts_i})
-                    ctx.position.clear_position()
-                if td in ('long', 'both'):
-                    if ctx.position == 0:
+                if is_grid_bot:
+                    if ctx.position < 0:
+                        out.append({'type': 'close_short', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
+                    elif ctx.position == 0:
                         out.append({'type': 'open_long', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
                         ctx.position.open_position('long', order_price or trig, pos_ratio)
                     else:
                         out.append({'type': 'add_long', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
                         ctx.position.add_position(order_price or trig, pos_ratio)
+                else:
+                    if ctx.position < 0:
+                        out.append({'type': 'close_short', 'trigger_price': order_price or trig, 'position_size': 0, 'timestamp': ts_i})
+                        ctx.position.clear_position()
+                    if td in ('long', 'both'):
+                        if ctx.position == 0:
+                            out.append({'type': 'open_long', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
+                            ctx.position.open_position('long', order_price or trig, pos_ratio)
+                        else:
+                            out.append({'type': 'add_long', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
+                            ctx.position.add_position(order_price or trig, pos_ratio)
                 continue
             if action == 'sell':
-                if ctx.position > 0:
-                    out.append({'type': 'close_long', 'trigger_price': order_price or trig, 'position_size': 0, 'timestamp': ts_i})
-                    ctx.position.clear_position()
-                if td in ('short', 'both'):
-                    if ctx.position == 0:
+                if is_grid_bot:
+                    if ctx.position > 0:
+                        out.append({'type': 'close_long', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
+                    elif ctx.position == 0:
                         out.append({'type': 'open_short', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
                         ctx.position.open_position('short', order_price or trig, pos_ratio)
                     else:
                         out.append({'type': 'add_short', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
                         ctx.position.add_position(order_price or trig, pos_ratio)
+                else:
+                    if ctx.position > 0:
+                        out.append({'type': 'close_long', 'trigger_price': order_price or trig, 'position_size': 0, 'timestamp': ts_i})
+                        ctx.position.clear_position()
+                    if td in ('short', 'both'):
+                        if ctx.position == 0:
+                            out.append({'type': 'open_short', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
+                            ctx.position.open_position('short', order_price or trig, pos_ratio)
+                        else:
+                            out.append({'type': 'add_short', 'trigger_price': order_price or trig, 'position_size': pos_ratio, 'timestamp': ts_i})
+                            ctx.position.add_position(order_price or trig, pos_ratio)
         return out
 
     def _script_evaluate_new_closed_bar(
@@ -719,6 +743,8 @@ class TradingExecutor:
             execution_mode = (strategy.get('execution_mode') or 'signal').strip().lower()
             if execution_mode not in ['signal', 'live']:
                 execution_mode = 'signal'
+            strategy_mode = (strategy.get('strategy_mode') or 'signal').strip().lower()
+            is_bot_mode = strategy_mode == 'bot'
             notification_config = strategy.get('notification_config') or {}
             strategy_name = strategy.get('strategy_name') or f"strategy_{int(strategy_id)}"
             symbol = trading_config.get('symbol', '')
@@ -1070,9 +1096,40 @@ class TradingExecutor:
                                                 )
                     else:
                         # ============================================
-                        # 3. 非K线更新 tick：脚本策略不在这里重算（仅在新 K 收盘时 on_bar）
+                        # 3. 非K线更新 tick
                         # ============================================
-                        if (not is_script) and 'df' in locals() and df is not None and len(df) > 0:
+                        # 3a. Bot-mode scripts: evaluate on every tick (grid/martingale need real-time price tracking)
+                        if is_script and is_bot_mode and on_bar_script and script_ctx is not None:
+                            try:
+                                self._hydrate_script_ctx_from_positions(script_ctx, strategy_id, symbol)
+                                script_ctx._orders = []
+                                tick_bar = ScriptBar(
+                                    open=float(current_price),
+                                    high=float(current_price),
+                                    low=float(current_price),
+                                    close=float(current_price),
+                                    volume=0,
+                                    timestamp=int(time.time()),
+                                )
+                                on_bar_script(script_ctx, tick_bar)
+                                if script_ctx._orders:
+                                    tick_ts = pd.Timestamp.now(tz='UTC')
+                                    new_sig = self._script_orders_to_execution_signals(
+                                        script_ctx, trade_direction, float(current_price), tick_ts, trading_config,
+                                    )
+                                    if new_sig:
+                                        pending_signals = new_sig
+                                        self._persist_script_runtime_state(strategy_id, tick_ts, script_ctx._params)
+                                        logger.info(f"Strategy {strategy_id} bot tick -> {len(new_sig)} signal(s)")
+                                    else:
+                                        self._persist_script_runtime_state(strategy_id, None, script_ctx._params)
+                                else:
+                                    self._persist_script_runtime_state(strategy_id, None, script_ctx._params)
+                            except Exception as e:
+                                logger.warning(f"Strategy {strategy_id} bot tick on_bar error: {e}")
+
+                        # 3b. Indicator strategies: real-time recompute
+                        elif (not is_script) and 'df' in locals() and df is not None and len(df) > 0:
                             try:
                                 realtime_df = df.copy()
                                 realtime_df = self._update_dataframe_with_current_price(realtime_df, current_price, timeframe)
@@ -2204,48 +2261,32 @@ class TradingExecutor:
                 'initial_last_add_price': float(initial_last_add_price)
             }
             
-            import builtins
-            def safe_import(name, *args, **kwargs):
-                allowed_modules = ['numpy', 'pandas', 'math', 'json', 'time']
-                if name in allowed_modules or name.split('.')[0] in allowed_modules:
-                    return builtins.__import__(name, *args, **kwargs)
-                raise ImportError(f"不允许导入模块: {name}")
-            
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
-                           if not k.startswith('_') and k not in [
-                               'eval', 'exec', 'compile', 'open', 'input',
-                               'help', 'exit', 'quit', '__import__',
-                               'copyright', 'credits', 'license'
-                           ]}
-            safe_builtins['__import__'] = safe_import
-            
+            from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
+
             exec_env = local_vars.copy()
-            exec_env['__builtins__'] = safe_builtins
-            
-            pre_import_code = "import numpy as np\nimport pandas as pd\n"
-            exec(pre_import_code, exec_env)
-            
-            # 兼容性修复：将旧版pandas的fillna(method=...)语法转换为新版语法
-            # pandas 2.0+ 移除了 fillna() 的 method 参数，需要使用 ffill() 或 bfill()
-            # 旧语法: df.fillna(method='ffill') 或 df.fillna(method="ffill")
-            # 新语法: df.ffill()
+            exec_env['__builtins__'] = build_safe_builtins()
+
+            # 兼容性修复：pandas 2.0+ 移除了 fillna(method=...) 参数
             import re
             compatibility_fixed_code = indicator_code
-            # 替换 fillna(method='ffill') 或 fillna(method="ffill") 为 ffill()
             compatibility_fixed_code = re.sub(
                 r'\.fillna\(\s*method\s*=\s*["\']ffill["\']\s*\)',
                 '.ffill()',
                 compatibility_fixed_code
             )
-            # 替换 fillna(method='bfill') 或 fillna(method="bfill") 为 bfill()
             compatibility_fixed_code = re.sub(
                 r'\.fillna\(\s*method\s*=\s*["\']bfill["\']\s*\)',
                 '.bfill()',
                 compatibility_fixed_code
             )
-            
-            # 这里的 safe_exec_code 假设已存在
-            exec(compatibility_fixed_code, exec_env)
+
+            exec_result = safe_exec_with_validation(
+                code=compatibility_fixed_code,
+                exec_globals=exec_env,
+                timeout=60,
+            )
+            if not exec_result['success']:
+                raise ValueError(f"Indicator execution failed: {exec_result['error']}")
             
             executed_df = exec_env.get('df', df)
 
@@ -2330,10 +2371,12 @@ class TradingExecutor:
             # Hard state-machine guard (double safety in addition to loop-level filtering).
             state = self._position_state(current_positions)
             if not self._is_signal_allowed(state, signal_type):
+                append_strategy_log(strategy_id, "info", f"Signal filtered by state machine: {signal_type} (state={state})")
                 return False
 
             # 1. 检查交易方向限制
             if market_type == 'spot' and 'short' in signal_type:
+                 append_strategy_log(strategy_id, "info", f"Signal rejected: spot market does not support {signal_type}")
                  return False
 
             sig = (signal_type or "").strip().lower()
@@ -2372,6 +2415,10 @@ class TradingExecutor:
                     )
                     logger.info(
                         f"AI entry filter rejected: strategy_id={strategy_id} symbol={symbol} signal={sig} ai={ai_decision} reason={reason}"
+                    )
+                    append_strategy_log(
+                        strategy_id, "info",
+                        f"AI filter blocked entry: {sig} {symbol}, decision={ai_decision}, reason={reason}",
                     )
                     return False
 
@@ -2440,6 +2487,7 @@ class TradingExecutor:
             if amount <= 0 and ('open' in signal_type or 'add' in signal_type):
                 return False
             
+            bot_order_mode = (trading_config or {}).get('order_mode') or None
             order_result = self._execute_exchange_order(
                 exchange=exchange,
                 strategy_id=strategy_id,
@@ -2453,6 +2501,7 @@ class TradingExecutor:
                 execution_mode=execution_mode,
                 notification_config=notification_config,
                 signal_ts=int(signal_ts or 0),
+                order_mode=bot_order_mode,
             )
             
             if order_result and order_result.get('success'):
@@ -2480,7 +2529,6 @@ class TradingExecutor:
                     )
                     side = 'short' if 'short' in signal_type else 'long'
                     
-                    # 查找现有持仓以计算均价
                     old_pos = next((p for p in current_positions if p['side'] == side), None)
                     new_size = amount
                     new_entry = current_price
@@ -2493,6 +2541,10 @@ class TradingExecutor:
                     self._update_position(
                         strategy_id=strategy_id, symbol=symbol, side=side,
                         size=new_size, entry_price=new_entry, current_price=current_price
+                    )
+                    append_strategy_log(
+                        strategy_id, "trade",
+                        f"Open position: {signal_type} {symbol} amount={amount:.6f} @ {current_price:.6f}, fee={_est_commission:.6f}",
                     )
                 elif sig.startswith("reduce_"):
                     # Partial scale-out: reduce position size, keep entry price unchanged.
@@ -2526,6 +2578,11 @@ class TradingExecutor:
                             strategy_id=strategy_id, symbol=symbol, side=side,
                             size=new_size, entry_price=old_entry, current_price=current_price
                         )
+                    _pstr = f", profit={reduce_profit:.4f}" if reduce_profit is not None else ""
+                    append_strategy_log(
+                        strategy_id, "trade",
+                        f"Reduce position: {signal_type} {symbol} amount={amount:.6f} @ {current_price:.6f}, fee={_est_commission:.6f}{_pstr}",
+                    )
                 elif 'close' in sig:
                     # 信号模式下计算平仓盈亏
                     side = 'short' if 'short' in signal_type else 'long'
@@ -2547,13 +2604,21 @@ class TradingExecutor:
                         profit=close_profit, commission=_est_commission
                     )
                     self._close_position(strategy_id, symbol, side)
+                    _pstr = f", profit={close_profit:.4f}" if close_profit is not None else ""
+                    append_strategy_log(
+                        strategy_id, "trade",
+                        f"Close position: {signal_type} {symbol} amount={amount:.6f} @ {current_price:.6f}, fee={_est_commission:.6f}{_pstr}",
+                    )
 
                 return True
 
+            _err = (order_result or {}).get("error", "unknown")
+            append_strategy_log(strategy_id, "error", f"Order enqueue failed: {signal_type} {symbol}, error={_err}")
             return False
             
         except Exception as e:
             logger.error(f"Failed to execute signal: {e}")
+            append_strategy_log(strategy_id, "error", f"Signal execution exception: {signal_type} {symbol}, {e}")
             return False
 
     def _is_entry_ai_filter_enabled(self, *, ai_model_config: Optional[Dict[str, Any]], trading_config: Optional[Dict[str, Any]]) -> bool:
@@ -2802,11 +2867,12 @@ class TradingExecutor:
                 "stop_loss_price": float(stop_loss_price or 0.0) if stop_loss_price is not None else 0.0,
                 "take_profit_price": float(take_profit_price or 0.0) if take_profit_price is not None else 0.0,
                 "margin_mode": str(margin_mode or "cross"),
-                # Order execution params moved to env config (ORDER_MODE, MAKER_WAIT_SEC, MAKER_OFFSET_BPS)
                 "maker_retries": int(maker_retries or 0),
                 "close_fallback_to_market": bool(close_fallback_to_market),
                 "open_fallback_to_market": bool(open_fallback_to_market),
             }
+            if order_mode:
+                extra_payload["order_mode"] = order_mode
             pending_id = self._enqueue_pending_order(
                 strategy_id=strategy_id,
                 symbol=symbol,
@@ -3299,18 +3365,17 @@ class TradingExecutor:
                 'config': trading_config,
             }
             
-            # 执行指标代码
-            import builtins
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
-                           if not k.startswith('_') and k not in [
-                               'eval', 'exec', 'compile', 'open', 'input',
-                               'help', 'exit', 'quit', '__import__',
-                           ]}
-            exec_env['__builtins__'] = safe_builtins
-            
-            pre_import_code = "import numpy as np\nimport pandas as pd\n"
-            exec(pre_import_code, exec_env)
-            exec(indicator_code, exec_env)
+            from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
+
+            exec_env['__builtins__'] = build_safe_builtins()
+
+            exec_result = safe_exec_with_validation(
+                code=indicator_code,
+                exec_globals=exec_env,
+                timeout=60,
+            )
+            if not exec_result['success']:
+                raise ValueError(f"Cross-sectional indicator failed: {exec_result['error']}")
             
             scores = exec_env.get('scores', {})
             rankings = exec_env.get('rankings', [])

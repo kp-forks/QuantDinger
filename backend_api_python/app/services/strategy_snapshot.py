@@ -145,7 +145,7 @@ class StrategySnapshotResolver:
             slippage_raw = trading_config.get("slippage")
         strategy_type_early = str(strategy.get("strategy_type") or "IndicatorStrategy").strip() or "IndicatorStrategy"
         strategy_mode_early = str(strategy.get("strategy_mode") or "signal").strip() or "signal"
-        is_script_early = strategy_type_early == "ScriptStrategy" or strategy_mode_early == "script"
+        is_script_early = strategy_type_early == "ScriptStrategy" or strategy_mode_early in ("script", "bot")
         if commission_raw is None or commission_raw == "":
             commission_raw = 0.05 if is_script_early else 0
         if slippage_raw is None or slippage_raw == "":

@@ -56,6 +56,8 @@ class HtxClient(BaseRestClient):
         self._contract_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         self._contract_cache_ttl_sec = 300.0
         self._lever_cache: Dict[str, int] = {}
+        self._account_type: Optional[int] = None  # 1=non-unified, 2=unified
+        self._account_type_ts: float = 0.0
 
     @staticmethod
     def _format_swap_client_order_id(client_order_id: Optional[str]) -> Optional[int]:
@@ -189,6 +191,90 @@ class HtxClient(BaseRestClient):
         except Exception:
             return False
 
+    def _detect_account_type(self) -> int:
+        """Detect HTX futures account type via v3 endpoint.
+        Returns 1=non-unified (cross/isolated), 2=unified, 0=unknown.
+        If unified (2), automatically attempts to switch to non-unified (1).
+        Result is cached for 10 minutes."""
+        now = time.time()
+        if self._account_type is not None and (now - self._account_type_ts) < 600:
+            return self._account_type
+        try:
+            raw = self._swap_private_request("GET", "/linear-swap-api/v3/swap_unified_account_type")
+            v3_code = raw.get("code")
+            if v3_code is not None and int(v3_code) != 200:
+                logger.warning("HTX swap_unified_account_type returned code=%s msg=%s", v3_code, raw.get("msg"))
+                self._account_type = 0
+                self._account_type_ts = now
+                return 0
+            data = raw.get("data") or {}
+            if isinstance(data, dict):
+                at = int(data.get("account_type") or 0)
+            elif isinstance(data, list) and data and isinstance(data[0], dict):
+                at = int(data[0].get("account_type") or 0)
+            else:
+                at = 0
+            self._account_type = at if at in (1, 2) else 0
+            self._account_type_ts = now
+            logger.info("HTX account_type=%s (%s)", self._account_type, "non-unified" if at == 1 else "unified" if at == 2 else "unknown")
+
+            if self._account_type == 2:
+                switched = self._try_switch_to_non_unified()
+                if switched:
+                    self._account_type = 1
+                    self._account_type_ts = now
+
+            return self._account_type
+        except Exception as e:
+            logger.warning("HTX detect account type failed: %s", e)
+            self._account_type = 0
+            self._account_type_ts = now
+            return 0
+
+    def _try_switch_to_non_unified(self) -> bool:
+        """Attempt to switch HTX asset mode to single-currency margin (asset_mode=0)
+        via the official V5 endpoint to resolve error 6002.
+        See: https://www.htx.com/zh-cn/opend/newApiPages/?id=8cb89359-77b5-11ed-9966-1957dd1a995
+        Falls back to v3 swap_switch_account_type if v5 fails."""
+        # Method 1: V5 /v5/account/asset_mode (official recommended)
+        try:
+            logger.info("HTX switching asset_mode to 0 (single-currency margin) via V5 API...")
+            raw = self._swap_private_request_lenient(
+                "POST", "/v5/account/asset_mode",
+                json_body={"asset_mode": 0},
+            )
+            # V5 success: {"status":"ok","data":{"asset_mode":0}} or {"code":200,...}
+            status = str(raw.get("status") or "").lower()
+            v5_code = raw.get("code")
+            if status == "ok" or (v5_code is not None and int(v5_code) == 200):
+                new_mode = (raw.get("data") or {}).get("asset_mode")
+                logger.info("HTX asset_mode switched to %s via V5 successfully", new_mode)
+                return True
+            err_msg = raw.get("err_msg") or raw.get("msg") or ""
+            err_code = raw.get("err_code") or raw.get("code") or ""
+            logger.warning("HTX V5 asset_mode switch returned: code=%s msg=%s", err_code, err_msg)
+        except Exception as e:
+            logger.warning("HTX V5 asset_mode switch exception: %s", e)
+
+        # Method 2: V3 swap_switch_account_type (fallback)
+        try:
+            logger.info("HTX falling back to V3 swap_switch_account_type...")
+            raw = self._swap_private_request_lenient(
+                "POST", "/linear-swap-api/v3/swap_switch_account_type",
+                json_body={"account_type": 1},
+            )
+            v3_code = raw.get("code")
+            if v3_code is not None and int(v3_code) == 200:
+                new_type = (raw.get("data") or {}).get("account_type")
+                logger.info("HTX account switched to non-unified via V3 (type=%s)", new_type)
+                return True
+            err_msg = raw.get("msg") or raw.get("err_msg") or ""
+            logger.warning("HTX V3 switch account type failed: code=%s msg=%s", v3_code, err_msg)
+        except Exception as e:
+            logger.warning("HTX V3 switch account type exception: %s", e)
+
+        return False
+
     def _get_spot_account_id(self) -> str:
         if self._spot_account_id:
             return self._spot_account_id
@@ -213,37 +299,98 @@ class HtxClient(BaseRestClient):
             return self._spot_private_request("GET", "/v1/account/accounts")
         return self.get_balance()
 
-    _BALANCE_ENDPOINTS = [
+    _BALANCE_ENDPOINTS_ISOLATED_FIRST = [
+        ("v1-isolated", "POST", "/linear-swap-api/v1/swap_account_info", {}),
         ("v1-cross", "POST", "/linear-swap-api/v1/swap_cross_account_info", {"margin_account": "USDT"}),
-        ("v5-cross", "POST", "/linear-swap-api/v5/swap_cross_account_info", {"margin_account": "USDT"}),
         ("v3-unified", "GET", "/linear-swap-api/v3/unified_account_info", None),
+    ]
+
+    _BALANCE_ENDPOINTS_UNIFIED_FIRST = [
+        ("v3-unified", "GET", "/linear-swap-api/v3/unified_account_info", None),
+        ("v1-cross", "POST", "/linear-swap-api/v1/swap_cross_account_info", {"margin_account": "USDT"}),
         ("v1-isolated", "POST", "/linear-swap-api/v1/swap_account_info", {}),
     ]
+
+    def _swap_private_request_lenient(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
+        """Like _swap_private_request but does NOT raise on status='error'.
+        Returns the raw dict so the caller can inspect both status-based and code-based errors."""
+        signed_params = self._sign_params(method=method, base_url=self.futures_base_url, path=path, params=kwargs.get("params") or {})
+        old_base = self.base_url
+        self.base_url = self.futures_base_url
+        try:
+            code, data, text = self._request(method, path, params=signed_params, json_body=kwargs.get("json_body"))
+        finally:
+            self.base_url = old_base
+        if code >= 400:
+            raise LiveTradingError(f"HTX swap HTTP {code}: {text[:500]}")
+        return data if isinstance(data, dict) else {"raw": data}
 
     def get_balance(self) -> Any:
         if self.market_type == "spot":
             account_id = self._get_spot_account_id()
             return self._spot_private_request("GET", f"/v1/account/accounts/{account_id}/balance")
+        acct = self._detect_account_type()
+        endpoints = self._BALANCE_ENDPOINTS_UNIFIED_FIRST if acct == 2 else self._BALANCE_ENDPOINTS_ISOLATED_FIRST
         last_err: Optional[Exception] = None
-        for tag, method, path, body in self._BALANCE_ENDPOINTS:
+        for tag, method, path, body in endpoints:
             try:
-                if body is not None:
-                    raw = self._swap_private_request(method, path, json_body=body)
-                else:
-                    raw = self._swap_private_request(method, path)
                 if tag == "v3-unified":
+                    raw = self._swap_private_request_lenient(method, path)
+                    # v3 may return {"code": 200, "data": [...]} or {"status": "error", ...}
+                    if str(raw.get("status") or "").lower() == "error":
+                        logger.warning("HTX %s returned error: err_code=%s msg=%s", tag, raw.get("err_code"), raw.get("err_msg"))
+                        last_err = LiveTradingError(f"HTX v3 unified error: {raw}")
+                        continue
                     v3_code = raw.get("code")
                     if v3_code is not None and int(v3_code) != 200:
-                        logger.debug("HTX %s returned code=%s", tag, v3_code)
+                        logger.warning("HTX %s returned code=%s msg=%s", tag, v3_code, raw.get("msg"))
                         continue
+                else:
+                    if body is not None:
+                        raw = self._swap_private_request(method, path, json_body=body)
+                    else:
+                        raw = self._swap_private_request(method, path)
                 data = raw.get("data")
-                if data:
+                if data is not None:
                     logger.info("HTX balance succeeded via %s", tag)
                     return raw
             except (LiveTradingError, Exception) as e:
-                logger.debug("HTX %s balance failed: %s", tag, e)
+                logger.warning("HTX %s balance failed: %s", tag, e)
                 last_err = e
-        logger.warning("HTX all balance endpoints failed, last error: %s", last_err)
+        # Last resort: try reading USDT from the spot wallet.
+        # During HTX's multi-asset collateral migration, all swap endpoints may return 6002
+        # but the spot account is usually accessible.
+        try:
+            logger.info("HTX swap balance unavailable, falling back to spot USDT balance")
+            spot_acct_id = self._get_spot_account_id()
+            spot_raw = self._spot_private_request("GET", f"/v1/account/accounts/{spot_acct_id}/balance")
+            spot_list = ((spot_raw.get("data") or {}).get("list") or []) if isinstance(spot_raw, dict) else []
+            usdt_total = 0.0
+            usdt_avail = 0.0
+            for item in spot_list:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("currency") or "").upper() != "USDT":
+                    continue
+                bal = float(item.get("balance") or 0)
+                typ = str(item.get("type") or "").lower()
+                if typ == "trade":
+                    usdt_avail += bal
+                usdt_total += bal
+            if usdt_total > 0 or usdt_avail > 0:
+                logger.info("HTX spot USDT fallback: avail=%.4f total=%.4f", usdt_avail, usdt_total)
+                return {"data": [{
+                    "margin_balance": usdt_total,
+                    "margin_static": usdt_total,
+                    "margin_available": usdt_avail,
+                    "withdraw_available": usdt_avail,
+                    "margin_asset": "USDT",
+                    "margin_mode": "spot_fallback",
+                }]}
+        except Exception as spot_e:
+            logger.warning("HTX spot USDT fallback also failed: %s", spot_e)
+
+        logger.warning("HTX all balance endpoints failed (acct_type=%s), last error: %s", acct, last_err)
         return {"data": []}
 
     def get_positions(self, *, symbol: str = "") -> Any:
@@ -273,21 +420,35 @@ class HtxClient(BaseRestClient):
             return {"data": rows}
 
         body = {"contract_code": to_htx_contract_code(symbol)} if symbol else {}
+        acct = self._detect_account_type()
+        if acct == 2:
+            logger.info("HTX unified account detected — v1 position endpoints may not work; returning empty")
+            # Unified account: v1 endpoints typically return 6002; no v3 position query exists.
+            # Best-effort: still try isolated, but gracefully return empty on failure.
+            try:
+                raw = self._swap_private_request("POST", "/linear-swap-api/v1/swap_position_info", json_body=body)
+                data = raw.get("data")
+                if data is not None:
+                    logger.info("HTX positions succeeded via v1-isolated (items=%d)", len(data) if isinstance(data, list) else -1)
+                    return raw
+            except Exception as e:
+                logger.info("HTX unified account v1-isolated position query failed (expected): %s", e)
+            return {"data": []}
+
         position_endpoints = [
-            ("v1-cross", "POST", "/linear-swap-api/v1/swap_cross_position_info", body),
-            ("v5-cross", "POST", "/linear-swap-api/v5/swap_cross_position_info", body),
             ("v1-isolated", "POST", "/linear-swap-api/v1/swap_position_info", body),
+            ("v1-cross", "POST", "/linear-swap-api/v1/swap_cross_position_info", body),
         ]
         last_err: Optional[Exception] = None
         for tag, method, path, req_body in position_endpoints:
             try:
                 raw = self._swap_private_request(method, path, json_body=req_body)
                 data = raw.get("data")
-                if data:
-                    logger.info("HTX positions succeeded via %s", tag)
+                if data is not None:
+                    logger.info("HTX positions succeeded via %s (items=%d)", tag, len(data) if isinstance(data, list) else -1)
                     return raw
             except (LiveTradingError, Exception) as e:
-                logger.debug("HTX %s position failed: %s", tag, e)
+                logger.warning("HTX %s position failed: %s", tag, e)
                 last_err = e
         logger.warning("HTX all position endpoints failed for symbol=%s, last error: %s", symbol, last_err)
         return {"data": []}
@@ -337,11 +498,12 @@ class HtxClient(BaseRestClient):
             lv = 1
         if lv < 1:
             lv = 1
+        # Try isolated first (avoids 6002 on accounts migrated away from multi-asset collateral)
         try:
             self._swap_private_request(
                 "POST",
-                "/linear-swap-api/v1/swap_cross_switch_lever_rate",
-                json_body={"contract_code": contract_code, "lever_rate": lv, "margin_account": "USDT"},
+                "/linear-swap-api/v1/swap_switch_lever_rate",
+                json_body={"contract_code": contract_code, "lever_rate": lv},
             )
             self._lever_cache[contract_code] = lv
             return True
@@ -349,8 +511,8 @@ class HtxClient(BaseRestClient):
             try:
                 self._swap_private_request(
                     "POST",
-                    "/linear-swap-api/v1/swap_switch_lever_rate",
-                    json_body={"contract_code": contract_code, "lever_rate": lv},
+                    "/linear-swap-api/v1/swap_cross_switch_lever_rate",
+                    json_body={"contract_code": contract_code, "lever_rate": lv, "margin_account": "USDT"},
                 )
                 self._lever_cache[contract_code] = lv
                 return True
@@ -422,13 +584,20 @@ class HtxClient(BaseRestClient):
         return self._place_swap_order(body)
 
     def _place_swap_order(self, body: Dict[str, Any]) -> LiveOrderResult:
-        """Try v1-cross → v5-cross → v1-isolated order endpoints."""
+        """Try isolated → cross order endpoints (isolated first to avoid 6002 on accounts
+        that have been migrated away from multi-asset collateral)."""
+        acct = self._detect_account_type()
+        if acct == 2:
+            raise LiveTradingError(
+                "HTX multi-asset collateral mode (联合保证金) is active and does not support API ordering. "
+                "Auto-switch to single-currency margin failed (may have open positions/orders). "
+                "Please switch to 单币种保证金 in HTX web/app → Contract → Settings, then retry."
+            )
         cross_body = dict(body)
         cross_body["margin_account"] = "USDT"
         order_endpoints = [
-            ("v1-cross", "/linear-swap-api/v1/swap_cross_order", cross_body),
-            ("v5-cross", "/linear-swap-api/v5/swap_cross_order", cross_body),
             ("v1-isolated", "/linear-swap-api/v1/swap_order", body),
+            ("v1-cross", "/linear-swap-api/v1/swap_cross_order", cross_body),
         ]
         last_err: Optional[Exception] = None
         for tag, path, req_body in order_endpoints:

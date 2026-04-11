@@ -919,6 +919,19 @@ def get_settings_schema():
     })
 
 
+@settings_bp.route('/public-config', methods=['GET'])
+@login_required
+def get_public_config():
+    """Return non-sensitive config values needed by frontend widgets."""
+    from app.config.data_sources import CCXTConfig
+    return jsonify({
+        'code': 1,
+        'data': {
+            'ccxt_default_exchange': (CCXTConfig.DEFAULT_EXCHANGE or 'binance').lower(),
+        }
+    })
+
+
 @settings_bp.route('/values', methods=['GET'])
 @login_required
 @admin_required

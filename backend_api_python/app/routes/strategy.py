@@ -1347,6 +1347,149 @@ def ai_generate_strategy():
         if not api_key:
             return jsonify({'code': '', 'msg': 'No LLM API key configured', 'params': None})
 
+        if intent == 'bot_recommend':
+            # ── Extract symbol from user prompt and fetch real market data ──
+            market_data_section = ""
+            try:
+                import re as _re
+                _symbol_map = {
+                    'BTC': 'BTC/USDT', 'ETH': 'ETH/USDT', 'SOL': 'SOL/USDT',
+                    'BNB': 'BNB/USDT', 'XRP': 'XRP/USDT', 'DOGE': 'DOGE/USDT',
+                    'ADA': 'ADA/USDT', 'AVAX': 'AVAX/USDT', 'DOT': 'DOT/USDT',
+                    'MATIC': 'MATIC/USDT', 'LINK': 'LINK/USDT', 'UNI': 'UNI/USDT',
+                    'ATOM': 'ATOM/USDT', 'LTC': 'LTC/USDT', 'FIL': 'FIL/USDT',
+                    'ARB': 'ARB/USDT', 'OP': 'OP/USDT', 'APT': 'APT/USDT',
+                    'SUI': 'SUI/USDT', 'PEPE': 'PEPE/USDT', 'WIF': 'WIF/USDT',
+                    'NEAR': 'NEAR/USDT', 'TRX': 'TRX/USDT', 'SHIB': 'SHIB/USDT',
+                }
+                prompt_upper = prompt.upper()
+                detected_symbol = None
+                for token, full_sym in _symbol_map.items():
+                    if token in prompt_upper:
+                        detected_symbol = full_sym
+                        break
+                if not detected_symbol:
+                    pair_match = _re.search(r'([A-Z]{2,10})\s*/?\s*USDT', prompt_upper)
+                    if pair_match:
+                        detected_symbol = pair_match.group(1) + '/USDT'
+
+                if detected_symbol:
+                    from app.services.kline import KlineService
+                    ks = KlineService()
+                    klines_4h = ks.get_kline(market='Crypto', symbol=detected_symbol, timeframe='4h', limit=50)
+                    klines_1d = ks.get_kline(market='Crypto', symbol=detected_symbol, timeframe='1d', limit=30)
+                    klines = klines_4h or klines_1d or []
+                    tf_label = '4h' if klines_4h else '1d'
+
+                    if klines and len(klines) >= 5:
+                        closes = [float(k.get('close', 0)) for k in klines if k.get('close')]
+                        highs = [float(k.get('high', 0)) for k in klines if k.get('high')]
+                        lows = [float(k.get('low', 0)) for k in klines if k.get('low')]
+                        volumes = [float(k.get('volume', 0)) for k in klines if k.get('volume')]
+                        current_price = closes[-1] if closes else 0
+                        high_recent = max(highs) if highs else 0
+                        low_recent = min(lows) if lows else 0
+                        avg_price = sum(closes) / len(closes) if closes else 0
+                        avg_volume = sum(volumes) / len(volumes) if volumes else 0
+                        price_change_pct = ((closes[-1] - closes[0]) / closes[0] * 100) if closes[0] else 0
+
+                        sma5 = sum(closes[-5:]) / min(5, len(closes[-5:])) if len(closes) >= 5 else avg_price
+                        sma20 = sum(closes[-20:]) / min(20, len(closes[-20:])) if len(closes) >= 20 else avg_price
+                        volatility = ((high_recent - low_recent) / avg_price * 100) if avg_price else 0
+
+                        market_data_section = (
+                            f"\n\n=== REAL-TIME MARKET DATA for {detected_symbol} (last {len(klines)} candles, {tf_label} timeframe) ===\n"
+                            f"Current Price: {current_price}\n"
+                            f"Period High: {high_recent}\n"
+                            f"Period Low: {low_recent}\n"
+                            f"Price Change: {price_change_pct:+.2f}%\n"
+                            f"Average Price: {avg_price:.4f}\n"
+                            f"SMA(5): {sma5:.4f}\n"
+                            f"SMA(20): {sma20:.4f}\n"
+                            f"Trend: {'Bullish (SMA5 > SMA20)' if sma5 > sma20 else 'Bearish (SMA5 < SMA20)'}\n"
+                            f"Volatility (range/avg): {volatility:.2f}%\n"
+                            f"Avg Volume: {avg_volume:.2f}\n"
+                            f"Recent 10 closes: {[round(c, 4) for c in closes[-10:]]}\n"
+                            f"=== END MARKET DATA ===\n\n"
+                            f"IMPORTANT: Use the REAL market data above to set realistic parameters. "
+                            f"For grid bots, set upperPrice/lowerPrice based on the actual Period High/Low and current volatility. "
+                            f"For trend bots, consider the current trend direction. "
+                            f"For DCA bots, consider the price level and change percentage."
+                        )
+                        logger.info(f"[AI Bot] Fetched market data for {detected_symbol}: price={current_price}, "
+                                    f"range=[{low_recent}, {high_recent}], change={price_change_pct:+.2f}%")
+            except Exception as mkt_err:
+                logger.warning(f"[AI Bot] Failed to fetch market data: {mkt_err}")
+
+            system_prompt = (
+                "You are an expert quantitative trading advisor. The user wants to create an automated trading bot.\n"
+                "Based on their description AND the real-time market data provided, recommend one of the four bot types and provide optimal parameters.\n\n"
+                "Available bot types and their parameter schemas:\n"
+                "1. grid - Grid Trading: {upperPrice: number, lowerPrice: number, gridCount: int(5-100), amountPerGrid: number, gridMode: 'arithmetic'|'geometric'}\n"
+                "2. martingale - Martingale: {initialAmount: number, multiplier: number(1.1-3.0), maxLayers: int(2-10), priceDropPct: number(1-20), takeProfitPct: number(1-50)}\n"
+                "3. trend - Trend Following: {maPeriod: int(5-200), maType: 'SMA'|'EMA', confirmBars: int(1-5), positionPct: number(10-100), direction: 'long'|'short'|'both'}\n"
+                "4. dca - DCA (Dollar-Cost Averaging): {amountEach: number, frequency: 'every_bar'|'4h'|'daily'|'weekly', totalBudget: number, dipBuyEnabled: bool, dipThreshold: number(1-30)}\n\n"
+                "Also suggest base config:\n"
+                "- symbol: string (e.g. 'BTC/USDT')\n"
+                "- timeframe: '1m'|'5m'|'15m'|'1h'|'4h'|'1d'\n"
+                "- marketType: 'swap'|'spot'\n"
+                "- leverage: int(1-125, only for swap)\n"
+                "- initialCapital: number (in USDT)\n\n"
+                "Risk config:\n"
+                "- stopLossPct: number(0-100)\n"
+                "- takeProfitPct: number(0-1000)\n"
+                "- maxPosition: number\n\n"
+                "CRITICAL: If real-time market data is provided, you MUST use it to set realistic and accurate parameters.\n"
+                "For example, for grid trading, the upperPrice and lowerPrice MUST be derived from the actual price range in the market data.\n"
+                "IMPORTANT: Do NOT set initialCapital in baseConfig - leave it as 0 or omit it. The user will enter their own investment amount.\n"
+                "Also do NOT set amountPerGrid, initialAmount(for martingale), or totalBudget(for DCA) - these will be auto-calculated from the user's capital.\n\n"
+                "Return ONLY a single JSON object with this structure:\n"
+                "{\n"
+                '  "botType": "grid"|"martingale"|"trend"|"dca",\n'
+                '  "botName": "descriptive name",\n'
+                '  "reason": "brief explanation in user\'s language, mention the market analysis",\n'
+                '  "baseConfig": {symbol, timeframe, marketType, leverage, initialCapital},\n'
+                '  "strategyParams": {... type-specific params ...},\n'
+                '  "riskConfig": {stopLossPct, takeProfitPct, maxPosition}\n'
+                "}\n"
+                "Do not use markdown fences. Respond with valid JSON only."
+            )
+
+            user_content = f"User request:\n{prompt.strip()}{market_data_section}"
+
+            content = llm.call_llm_api(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                model=llm.get_code_generation_model(),
+                temperature=0.4,
+                use_json_mode=False
+            )
+
+            raw = (content or '').strip()
+            if raw.startswith('```'):
+                raw = re.sub(r'^```[a-zA-Z]*', '', raw).strip()
+                if raw.endswith('```'):
+                    raw = raw[:-3].strip()
+            result = None
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                m = re.search(r'\{[\s\S]*\}', raw)
+                if m:
+                    try:
+                        result = json.loads(m.group(0))
+                    except json.JSONDecodeError:
+                        result = None
+            if not isinstance(result, dict) or 'botType' not in result:
+                return jsonify({'code': '', 'params': None, 'bot_recommend': None,
+                                'msg': 'AI did not return valid bot recommendation'})
+            valid_types = ('grid', 'martingale', 'trend', 'dca')
+            if result.get('botType') not in valid_types:
+                result['botType'] = 'grid'
+            return jsonify({'code': '', 'params': None, 'bot_recommend': result, 'msg': 'success'})
+
         if intent == 'adjust_params':
             template_key = payload.get('template_key') or ''
             current_params = payload.get('params') or {}

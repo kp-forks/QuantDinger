@@ -102,9 +102,15 @@ def connect():
             terminal_path=str(terminal_path),
         )
         
-        # Create new client with config
+        # Disconnect old client before creating new one
+        if _client is not None:
+            try:
+                _client.disconnect()
+            except Exception:
+                pass
+
         _client = MT5Client(config)
-        
+
         if _client.connect():
             account_info = _client.get_account_info()
             return jsonify({

@@ -246,16 +246,19 @@ class IBKRClient:
             # Wait for order status update
             self._ib.sleep(2)
             
+            status = trade.orderStatus.status
+            rejected = status in ("Cancelled", "ApiCancelled", "Inactive")
+            
             return OrderResult(
-                success=True,
+                success=not rejected,
                 order_id=trade.order.orderId,
                 filled=float(trade.orderStatus.filled or 0),
                 avg_price=float(trade.orderStatus.avgFillPrice or 0),
-                status=trade.orderStatus.status,
-                message="Order submitted",
+                status=status,
+                message=f"Order {status}" if rejected else "Order submitted",
                 raw={
                     "orderId": trade.order.orderId,
-                    "status": trade.orderStatus.status,
+                    "status": status,
                     "filled": float(trade.orderStatus.filled or 0),
                     "remaining": float(trade.orderStatus.remaining or 0),
                 }
@@ -310,16 +313,19 @@ class IBKRClient:
             trade = self._ib.placeOrder(contract, order)
             self._ib.sleep(1)
             
+            status = trade.orderStatus.status
+            rejected = status in ("Cancelled", "ApiCancelled", "Inactive")
+            
             return OrderResult(
-                success=True,
+                success=not rejected,
                 order_id=trade.order.orderId,
                 filled=float(trade.orderStatus.filled or 0),
                 avg_price=float(trade.orderStatus.avgFillPrice or 0),
-                status=trade.orderStatus.status,
-                message="Limit order submitted",
+                status=status,
+                message=f"Limit order {status}" if rejected else "Limit order submitted",
                 raw={
                     "orderId": trade.order.orderId,
-                    "status": trade.orderStatus.status,
+                    "status": status,
                     "limitPrice": price,
                 }
             )

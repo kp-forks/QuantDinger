@@ -318,7 +318,7 @@ class StrategyService:
                         from app.services.live_trading.factory import create_ibkr_client
                         ibkr_client = create_ibkr_client(resolved)
                         # create_ibkr_client already connects, so if it returns, connection is successful
-                        if ibkr_client and ibkr_client.connected():
+                        if ibkr_client and ibkr_client.connected:
                             # Get account summary if available
                             account_summary = None
                             try:

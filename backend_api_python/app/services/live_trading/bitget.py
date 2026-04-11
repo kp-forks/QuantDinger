@@ -10,10 +10,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from app.services.live_trading.base import BaseRestClient, LiveOrderResult, LiveTradingError
@@ -74,6 +75,44 @@ class BitgetMixClient(BaseRestClient):
             return Decimal(str(x))
         except Exception:
             return Decimal("0")
+
+    @staticmethod
+    def _parse_fee_detail(raw_fd: Any) -> Tuple[Decimal, str]:
+        """Parse Bitget feeDetail (list, dict, or JSON string) into (abs_fee, ccy).
+
+        Sums ALL entries when feeDetail is a list (futures may have multiple items).
+        """
+        if raw_fd is None:
+            return Decimal("0"), ""
+
+        # feeDetail may arrive as a JSON string from some API versions
+        if isinstance(raw_fd, str):
+            raw_fd = raw_fd.strip()
+            if not raw_fd or raw_fd in ("0", "null"):
+                return Decimal("0"), ""
+            try:
+                raw_fd = json.loads(raw_fd)
+            except (json.JSONDecodeError, ValueError):
+                return Decimal("0"), ""
+
+        entries: List[Dict[str, Any]] = []
+        if isinstance(raw_fd, list):
+            entries = [e for e in raw_fd if isinstance(e, dict)]
+        elif isinstance(raw_fd, dict):
+            entries = [raw_fd]
+
+        total_fee = Decimal("0")
+        ccy = ""
+        for entry in entries:
+            fv = entry.get("totalFee") or entry.get("totalDeductionFee") or entry.get("fee")
+            try:
+                fee = Decimal(str(fv))
+            except Exception:
+                fee = Decimal("0")
+            total_fee += abs(fee)
+            if not ccy:
+                ccy = str(entry.get("feeCoin") or entry.get("feeCcy") or "").strip()
+        return total_fee, ccy
 
     @staticmethod
     def _dec_str(d: Decimal, max_decimals: int = 18, strict_precision: Optional[int] = None) -> str:
@@ -800,7 +839,6 @@ class BitgetMixClient(BaseRestClient):
             fv = drow.get("fee")
             if fv is None:
                 fv = drow.get("totalFee") or drow.get("deductFee") or drow.get("fillFee") or drow.get("cumExecFee")
-            fee = self._to_dec(fv or "0")
             ccy = str(
                 drow.get("feeCoin")
                 or drow.get("feeCcy")
@@ -808,6 +846,13 @@ class BitgetMixClient(BaseRestClient):
                 or drow.get("deductFeeCoin")
                 or ""
             ).strip()
+            # Bitget V2: feeDetail nested structure (may be list, dict, or JSON string)
+            if fv is None or str(fv).strip() in ("", "0", "0.0"):
+                fd_fee, fd_ccy = self._parse_fee_detail(drow.get("feeDetail"))
+                if fd_fee > 0:
+                    logger.debug("Bitget order detail fee via feeDetail: %.8f %s", fd_fee, fd_ccy)
+                    return fd_fee, fd_ccy or ccy
+            fee = self._to_dec(fv or "0")
             return fee, ccy
 
         while True:
@@ -840,10 +885,20 @@ class BitgetMixClient(BaseRestClient):
                             fee_v = f.get("fee")
                             if fee_v is None:
                                 fee_v = f.get("fillFee") or f.get("tradeFee") or f.get("deductFee")
-                            fee = self._to_dec(fee_v or "0")
                             ccy = str(
                                 f.get("feeCoin") or f.get("feeCcy") or f.get("fillFeeCoin") or f.get("feeCurrency") or ""
                             ).strip()
+                            # Bitget V2: fee is inside feeDetail (list/dict/JSON string)
+                            if fee_v is None or str(fee_v).strip() in ("", "0", "0.0"):
+                                fd_fee, fd_ccy = self._parse_fee_detail(f.get("feeDetail"))
+                                if fd_fee > 0:
+                                    fee = fd_fee
+                                    if not ccy and fd_ccy:
+                                        ccy = fd_ccy
+                                else:
+                                    fee = self._to_dec(fee_v or "0")
+                            else:
+                                fee = self._to_dec(fee_v or "0")
 
                             if sz_base > 0 and px > 0:
                                 total_base += sz_base
@@ -859,6 +914,10 @@ class BitgetMixClient(BaseRestClient):
                     if total_fee <= 0 and not timed_out:
                         time.sleep(float(poll_interval_sec or 0.5))
                         continue
+                    logger.debug(
+                        "Bitget Mix fill result: filled=%s avg=%.8f fee=%.8f %s (order=%s)",
+                        total_base, float(total_quote / total_base), float(total_fee), fee_ccy, order_id,
+                    )
                     return {
                         "filled": float(total_base),
                         "avg_price": float(total_quote / total_base),
@@ -889,10 +948,13 @@ class BitgetMixClient(BaseRestClient):
                     abs_fee = abs(dfee) if dfee != 0 else Decimal("0")
 
                     if filled > 0 and avg > 0:
-                        # Wait for fills endpoint while time left so fee is not stuck at 0.
                         if not timed_out and abs_fee == 0:
                             time.sleep(float(poll_interval_sec or 0.5))
                             continue
+                        logger.debug(
+                            "Bitget Mix detail result: filled=%.8f avg=%.8f fee=%.8f %s (order=%s, via=detail)",
+                            filled, avg, float(abs_fee), dccy, order_id,
+                        )
                         return {
                             "filled": filled,
                             "avg_price": avg,
@@ -906,6 +968,10 @@ class BitgetMixClient(BaseRestClient):
                         if not timed_out and filled > 0 and abs_fee == 0:
                             time.sleep(float(poll_interval_sec or 0.5))
                             continue
+                        logger.debug(
+                            "Bitget Mix detail result (terminal): filled=%.8f avg=%.8f fee=%.8f %s (order=%s, state=%s)",
+                            filled, avg, float(abs_fee), dccy, order_id, state,
+                        )
                         return {
                             "filled": filled,
                             "avg_price": avg,

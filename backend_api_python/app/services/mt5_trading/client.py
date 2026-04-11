@@ -347,8 +347,28 @@ class MT5Client:
                     message=f"Symbol not found: {symbol}"
                 )
             
+            # Validate and round volume (same as market order)
+            volume_float = float(volume)
+            if volume_float < symbol_info.volume_min:
+                return OrderResult(
+                    success=False,
+                    message=f"Volume {volume_float} below minimum {symbol_info.volume_min}"
+                )
+            if volume_float > symbol_info.volume_max:
+                return OrderResult(
+                    success=False,
+                    message=f"Volume {volume_float} exceeds maximum {symbol_info.volume_max}"
+                )
+            volume_step = symbol_info.volume_step
+            if volume_step > 0:
+                volume_float = round(volume_float / volume_step) * volume_step
+            
             if not symbol_info.visible:
-                mt5.symbol_select(symbol, True)
+                if not mt5.symbol_select(symbol, True):
+                    return OrderResult(
+                        success=False,
+                        message=f"Failed to select symbol: {symbol}"
+                    )
             
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
@@ -369,15 +389,25 @@ class MT5Client:
                 else:
                     order_type = mt5.ORDER_TYPE_SELL_STOP
             
+            # Determine filling mode (consistent with market order)
+            filling_mode = mt5.ORDER_FILLING_RETURN  # RETURN is safest for pending orders
+            if symbol_info.filling_mode & mt5.ORDER_FILLING_FOK:
+                filling_mode = mt5.ORDER_FILLING_FOK
+            elif symbol_info.filling_mode & mt5.ORDER_FILLING_IOC:
+                filling_mode = mt5.ORDER_FILLING_IOC
+            elif symbol_info.filling_mode & mt5.ORDER_FILLING_RETURN:
+                filling_mode = mt5.ORDER_FILLING_RETURN
+            
             request = {
                 "action": mt5.TRADE_ACTION_PENDING,
                 "symbol": symbol,
-                "volume": float(volume),
+                "volume": volume_float,
                 "type": order_type,
                 "price": price,
                 "magic": self.config.magic_number,
                 "comment": comment,
                 "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": filling_mode,
             }
             
             result = mt5.order_send(request)

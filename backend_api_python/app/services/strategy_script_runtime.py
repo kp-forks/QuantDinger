@@ -151,35 +151,19 @@ def compile_strategy_script_handlers(code: str) -> Tuple[Optional[Callable], Opt
     if not code or not str(code).strip():
         raise ValueError("Strategy script is empty")
 
-    import builtins
-
-    def safe_import(name, *args, **kwargs):
-        allowed_modules = ['numpy', 'pandas', 'math', 'json', 'datetime', 'time']
-        if name in allowed_modules or name.split('.')[0] in allowed_modules:
-            return builtins.__import__(name, *args, **kwargs)
-        raise ImportError(f"Import not allowed: {name}")
-
-    safe_builtins = {k: getattr(builtins, k) for k in dir(builtins)
-                     if not k.startswith('_') and k not in ['eval', 'exec', 'compile', 'open', 'input', 'help', 'exit', 'quit']}
-    safe_builtins['__import__'] = safe_import
+    from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
 
     exec_env = {
-        '__builtins__': safe_builtins,
+        '__builtins__': build_safe_builtins(),
         'np': np,
         'pd': pd,
     }
 
-    from app.utils.safe_exec import validate_code_safety, safe_exec_code
-
-    is_safe, error_msg = validate_code_safety(code)
-    if not is_safe:
-        raise ValueError(f"Code contains unsafe operations: {error_msg}")
-
-    exec_result = safe_exec_code(
+    exec_result = safe_exec_with_validation(
         code=code,
         exec_globals=exec_env,
         exec_locals=exec_env,
-        timeout=60
+        timeout=60,
     )
     if not exec_result['success']:
         raise RuntimeError(f"Code execution failed: {exec_result.get('error')}")

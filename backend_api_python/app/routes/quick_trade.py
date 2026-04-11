@@ -683,6 +683,9 @@ def get_balance():
                 else:
                     raw = client.get_accounts()
                 balance_data = _parse_balance(raw, exchange_id, market_type)
+            elif hasattr(client, "get_wallet_balance"):
+                raw = client.get_wallet_balance()
+                balance_data = _parse_balance(raw, exchange_id, market_type)
             elif (exchange_id or "").lower() == "bitget" and market_type == "spot" and hasattr(client, "get_assets"):
                 raw = client.get_assets()
                 balance_data = _parse_balance(raw, exchange_id, market_type)
@@ -812,18 +815,30 @@ def _parse_balance(raw: Any, exchange_id: str, market_type: str) -> Dict[str, An
                     )
                     result["total"] = float(first.get("totalEq") or first.get("adjEq") or 0)
                     return result
-            # Bybit
+            # Bybit v5: prefer account-level totalAvailableBalance / totalEquity
             if "result" in raw:
                 res = raw["result"]
                 if isinstance(res, dict):
                     coin_list = res.get("list", [])
                     if isinstance(coin_list, list):
                         for acc in coin_list:
+                            if not isinstance(acc, dict):
+                                continue
+                            # Account-level balance (UTA: the recommended approach)
+                            acct_avail = _num(acc.get("totalAvailableBalance"))
+                            acct_equity = _num(acc.get("totalEquity") or acc.get("totalWalletBalance"))
+                            if acct_avail > 0 or acct_equity > 0:
+                                result["available"] = acct_avail
+                                result["total"] = acct_equity if acct_equity > 0 else acct_avail
+                                return result
+                            # Fallback: per-coin USDT balance (Classic / non-UTA)
                             coins = acc.get("coin", []) if isinstance(acc, dict) else []
                             for c in coins:
                                 if str(c.get("coin") or "").upper() == "USDT":
-                                    result["available"] = float(c.get("availableToWithdraw") or c.get("walletBalance") or 0)
-                                    result["total"] = float(c.get("walletBalance") or 0)
+                                    wb = _num(c.get("walletBalance"))
+                                    avail = _num(c.get("availableToWithdraw")) or wb
+                                    result["available"] = avail
+                                    result["total"] = wb if wb > 0 else avail
                                     return result
             # HTX spot
             if isinstance(data, dict) and isinstance(data.get("list"), list):
@@ -838,12 +853,16 @@ def _parse_balance(raw: Any, exchange_id: str, market_type: str) -> Dict[str, An
                 if total > 0 or result["available"] > 0:
                     result["total"] = total or result["available"]
                     return result
-            # HTX swap
+            # HTX swap (v1 isolated/cross returns list, v3 unified may return dict)
+            htx_swap_item = None
             if isinstance(data, list) and data and isinstance(data[0], dict):
-                first = data[0]
-                if "margin_available" in first or "margin_balance" in first or "withdraw_available" in first:
-                    result["available"] = float(first.get("margin_available") or first.get("withdraw_available") or 0)
-                    result["total"] = float(first.get("margin_balance") or first.get("margin_static") or 0)
+                htx_swap_item = data[0]
+            elif isinstance(data, dict) and ("margin_balance" in data or "margin_available" in data or "withdraw_available" in data):
+                htx_swap_item = data
+            if htx_swap_item is not None:
+                if "margin_available" in htx_swap_item or "margin_balance" in htx_swap_item or "withdraw_available" in htx_swap_item:
+                    result["available"] = float(htx_swap_item.get("margin_available") or htx_swap_item.get("withdraw_available") or 0)
+                    result["total"] = float(htx_swap_item.get("margin_balance") or htx_swap_item.get("margin_static") or 0)
                     return result
         # Fallback: try to find any USDT-like values
         if isinstance(raw, dict):

@@ -38,6 +38,7 @@ from app.services.live_trading.symbols import to_okx_swap_inst_id
 from app.services.live_trading.symbols import to_gate_currency_pair
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
+from app.utils.strategy_runtime_logs import append_strategy_log
 
 # Lazy import IBKR to avoid ImportError if ib_insync not installed
 IBKRClient = None
@@ -771,6 +772,10 @@ class PendingOrderWorker:
                 if fail_channels:
                     note += f";fail={','.join(fail_channels)}"
                 self._mark_sent(order_id=order_id, note=note[:200])
+                append_strategy_log(
+                    int(strategy_id or 0), "signal",
+                    f"Signal notification sent: {signal_type} {symbol} @ {price:.6f}, channels={','.join(ok_channels)}",
+                )
             else:
                 # Nothing succeeded -> mark failed with a compact error summary.
                 first_err = ""
@@ -780,6 +785,10 @@ class PendingOrderWorker:
                         first_err = f"{c}:{err}"
                         break
                 self._mark_failed(order_id=order_id, error=first_err or "notify_failed")
+                append_strategy_log(
+                    int(strategy_id or 0), "error",
+                    f"Signal notification failed: {signal_type} {symbol}, error={first_err or 'notify_failed'}",
+                )
             return
 
         if mode == "live":
@@ -907,6 +916,7 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error="missing_symbol_or_signal_type")
             _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} missing symbol/signal_type")
             _notify_live_best_effort(status="failed", error="missing_symbol_or_signal_type")
+            append_strategy_log(strategy_id, "error", f"Order rejected: missing symbol or signal_type")
             return
 
         cfg = load_strategy_configs(strategy_id)
@@ -922,6 +932,7 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error=f"live_trading_not_supported_for_{market_category.lower()}")
             _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {market_category} does not support live trading")
             _notify_live_best_effort(status="failed", error=f"live_trading_not_supported_for_{market_category.lower()}")
+            append_strategy_log(strategy_id, "error", f"Order rejected: {market_category} does not support live trading")
             return
 
         # Validate IBKR only for USStock
@@ -961,6 +972,7 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error=f"create_client_failed:{e}")
             _console_print(f"[worker] create_client_failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=f"create_client_failed:{e}")
+            append_strategy_log(strategy_id, "error", f"Exchange client creation failed ({exchange_id}): {e}")
             return
 
         # Check if this is an IBKR client (US stocks)
@@ -1036,6 +1048,7 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error="spot_market_does_not_support_short_signals")
             _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} spot short not supported")
             _notify_live_best_effort(status="failed", error="spot_market_does_not_support_short_signals")
+            append_strategy_log(strategy_id, "error", f"Order rejected: spot market does not support short signals ({symbol} {signal_type})")
             return
 
         # Unified maker->market fallback settings
@@ -1153,6 +1166,7 @@ class PendingOrderWorker:
                 self._mark_failed(order_id=order_id, error=err)
                 _console_print(f"[worker] order rejected: strategy_id={strategy_id} pending_id={order_id} {err}")
                 _notify_live_best_effort(status="failed", error=err, amount_hint=amount, price_hint=ref_price)
+                append_strategy_log(strategy_id, "error", f"Binance set leverage failed for {symbol}: {e}")
                 return
 
         # Accumulate fills across phases
@@ -1300,6 +1314,7 @@ class PendingOrderWorker:
         if remaining <= 0:
             self._mark_failed(order_id=order_id, error="invalid_amount")
             _notify_live_best_effort(status="failed", error="invalid_amount", amount_hint=amount)
+            append_strategy_log(strategy_id, "error", f"Order rejected: invalid amount ({amount}) for {symbol} {signal_type}")
             return
 
         # Phase 1: limit (hang order)
@@ -1511,14 +1526,12 @@ class PendingOrderWorker:
                     q = client.wait_for_fill(symbol=str(symbol), order_id=limit_order_id, client_order_id=limit_client_oid, max_wait_sec=maker_wait_sec)
                     phases["limit_query"] = q
                     _apply_fill(float(q.get("filled") or 0.0), float(q.get("avg_price") or 0.0))
-                    fee_v, fee_c = _fetch_fee_best_effort(order_id0=limit_order_id, client_order_id0=limit_client_oid)
-                    _apply_fee(float(fee_v or 0.0), str(fee_c or ""))
+                    _apply_fee(float(q.get("fee") or 0.0), str(q.get("fee_ccy") or ""))
                 elif isinstance(client, BinanceSpotClient):
                     q = client.wait_for_fill(symbol=str(symbol), order_id=limit_order_id, client_order_id=limit_client_oid, max_wait_sec=maker_wait_sec)
                     phases["limit_query"] = q
                     _apply_fill(float(q.get("filled") or 0.0), float(q.get("avg_price") or 0.0))
-                    fee_v, fee_c = _fetch_fee_best_effort(order_id0=limit_order_id, client_order_id0=limit_client_oid)
-                    _apply_fee(float(fee_v or 0.0), str(fee_c or ""))
+                    _apply_fee(float(q.get("fee") or 0.0), str(q.get("fee_ccy") or ""))
                 elif isinstance(client, OkxClient):
                     q = client.wait_for_fill(symbol=str(symbol), ord_id=limit_order_id, cl_ord_id=limit_client_oid, market_type=market_type, max_wait_sec=maker_wait_sec)
                     phases["limit_query"] = q
@@ -1659,10 +1672,12 @@ class PendingOrderWorker:
                 # Fall back to market for full amount
                 remaining = float(amount or 0.0)
                 phases["limit_error"] = str(e)
+                append_strategy_log(strategy_id, "error", f"Exchange limit order failed ({exchange_id} {symbol}): {e}, falling back to market")
             except Exception as e:
                 logger.warning(f"live limit phase unexpected error: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
                 remaining = float(amount or 0.0)
                 phases["limit_error"] = str(e)
+                append_strategy_log(strategy_id, "error", f"Limit order unexpected error ({exchange_id} {symbol}): {e}, falling back to market")
 
         # Phase 2: market for remaining
         market_order_id = ""
@@ -1860,17 +1875,15 @@ class PendingOrderWorker:
 
                 # Query fills (short wait)
                 if isinstance(client, BinanceFuturesClient):
-                    q2 = client.wait_for_fill(symbol=str(symbol), order_id=market_order_id, client_order_id=market_client_oid, max_wait_sec=3.0)
+                    q2 = client.wait_for_fill(symbol=str(symbol), order_id=market_order_id, client_order_id=market_client_oid, max_wait_sec=5.0)
                     phases["market_query"] = q2
                     _apply_fill(float(q2.get("filled") or 0.0), float(q2.get("avg_price") or 0.0))
-                    fee_v, fee_c = _fetch_fee_best_effort(order_id0=market_order_id, client_order_id0=market_client_oid)
-                    _apply_fee(float(fee_v or 0.0), str(fee_c or ""))
+                    _apply_fee(float(q2.get("fee") or 0.0), str(q2.get("fee_ccy") or ""))
                 elif isinstance(client, BinanceSpotClient):
-                    q2 = client.wait_for_fill(symbol=str(symbol), order_id=market_order_id, client_order_id=market_client_oid, max_wait_sec=3.0)
+                    q2 = client.wait_for_fill(symbol=str(symbol), order_id=market_order_id, client_order_id=market_client_oid, max_wait_sec=5.0)
                     phases["market_query"] = q2
                     _apply_fill(float(q2.get("filled") or 0.0), float(q2.get("avg_price") or 0.0))
-                    fee_v, fee_c = _fetch_fee_best_effort(order_id0=market_order_id, client_order_id0=market_client_oid)
-                    _apply_fee(float(fee_v or 0.0), str(fee_c or ""))
+                    _apply_fee(float(q2.get("fee") or 0.0), str(q2.get("fee_ccy") or ""))
                 elif isinstance(client, OkxClient):
                     # OKX fills endpoint may lag shortly after execution; wait a bit longer to capture fee.
                     q2 = client.wait_for_fill(symbol=str(symbol), ord_id=market_order_id, cl_ord_id=market_client_oid, market_type=market_type, max_wait_sec=12.0)
@@ -1947,16 +1960,19 @@ class PendingOrderWorker:
                         f"[worker] market tail failed but partial filled: strategy_id={strategy_id} pending_id={order_id} filled={total_base} err={e}"
                     )
                     remaining = 0.0
+                    append_strategy_log(strategy_id, "error", f"Exchange market order partially failed ({symbol} {signal_type}): {e} (partial filled={total_base})")
                 else:
                     self._mark_failed(order_id=order_id, error=str(e))
                     _console_print(f"[worker] order failed: strategy_id={strategy_id} pending_id={order_id} err={e}")
                     _notify_live_best_effort(status="failed", error=str(e), amount_hint=amount, price_hint=ref_price)
+                    append_strategy_log(strategy_id, "error", f"Exchange order failed ({exchange_id} {symbol} {signal_type}): {e}")
                     return
             except Exception as e:
                 logger.warning(f"live market phase unexpected error: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
                 self._mark_failed(order_id=order_id, error=str(e))
                 _console_print(f"[worker] order unexpected error: strategy_id={strategy_id} pending_id={order_id} err={e}")
                 _notify_live_best_effort(status="failed", error=str(e), amount_hint=amount, price_hint=ref_price)
+                append_strategy_log(strategy_id, "error", f"Unexpected order error ({exchange_id} {symbol} {signal_type}): {e}")
                 return
 
         # Build final result (best-effort)
@@ -2012,13 +2028,17 @@ class PendingOrderWorker:
                     trade_type=str(signal_type),
                     price=avg_price,
                     amount=filled,
-                    # Always persist fee (even if fee_ccy is not stablecoin), and store fee currency separately.
-                    # Profit adjustment is only applied when fee currency is stable (see above).
                     commission=float(total_fee or 0.0),
                     commission_ccy=str(fee_ccy or "").strip().upper(),
                     profit=profit,
                 )
                 logger.info(f"live record done: pending_id={order_id} strategy_id={strategy_id} symbol={symbol} signal={signal_type}")
+                _profit_str = f", profit={profit:.4f}" if profit is not None else ""
+                _fee_str = f", fee={total_fee:.6f} {fee_ccy}" if total_fee > 0 else ""
+                append_strategy_log(
+                    strategy_id, "trade",
+                    f"Trade executed: {signal_type} {symbol} filled={filled:.6f} @ {avg_price:.6f}{_fee_str}{_profit_str} (exchange={res.exchange_id})",
+                )
         except Exception as e:
             logger.warning(f"record_trade/update_position failed: pending_id={order_id}, err={e}")
 
@@ -2089,7 +2109,7 @@ class PendingOrderWorker:
             # Place market order via IBKR
             result = client.place_market_order(
                 symbol=symbol,
-                action=action,
+                side=action,
                 quantity=amount,
                 market_type=market_type,
             )
@@ -2098,16 +2118,18 @@ class PendingOrderWorker:
                 self._mark_failed(order_id=order_id, error=f"ibkr_order_failed:{result.message}")
                 _console_print(f"[worker] IBKR order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
                 _notify_live_best_effort(status="failed", error=f"ibkr_order_failed:{result.message}")
+                append_strategy_log(strategy_id, "error", f"IBKR order failed ({symbol} {signal_type}): {result.message}")
                 return
 
             filled = float(result.filled or 0.0)
             avg_price = float(result.avg_price or 0.0)
             exchange_order_id = str(result.order_id or "")
 
-            # Use ref_price if avg_price not available
             if avg_price <= 0 and ref_price > 0:
+                logger.warning(f"[worker] IBKR order avg_price=0, using ref_price={ref_price} as fallback: strategy_id={strategy_id} pending_id={order_id}")
                 avg_price = ref_price
             if filled <= 0:
+                logger.warning(f"[worker] IBKR order filled=0, using amount={amount} as fallback: strategy_id={strategy_id} pending_id={order_id}")
                 filled = amount
 
             executed_at = int(time.time())
@@ -2150,6 +2172,11 @@ class PendingOrderWorker:
                         profit=profit,
                     )
                     logger.info(f"IBKR record done: pending_id={order_id} strategy_id={strategy_id} symbol={symbol}")
+                    _pstr = f", profit={profit:.4f}" if profit is not None else ""
+                    append_strategy_log(
+                        strategy_id, "trade",
+                        f"Trade executed: {signal_type} {symbol} filled={filled:.6f} @ {avg_price:.6f}{_pstr} (exchange=ibkr)",
+                    )
             except Exception as e:
                 logger.warning(f"IBKR record_trade/update_position failed: pending_id={order_id}, err={e}")
 
@@ -2167,6 +2194,7 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error=f"ibkr_exception:{e}")
             _console_print(f"[worker] IBKR order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=str(e))
+            append_strategy_log(strategy_id, "error", f"IBKR order exception ({symbol} {signal_type}): {e}")
 
     def _execute_mt5_order(
         self,
@@ -2236,16 +2264,18 @@ class PendingOrderWorker:
                 self._mark_failed(order_id=order_id, error=f"mt5_order_failed:{result.message}")
                 _console_print(f"[worker] MT5 order failed: strategy_id={strategy_id} pending_id={order_id} err={result.message}")
                 _notify_live_best_effort(status="failed", error=f"mt5_order_failed:{result.message}")
+                append_strategy_log(strategy_id, "error", f"MT5 order failed ({symbol} {signal_type}): {result.message}")
                 return
 
             filled = float(result.filled or 0.0)
             avg_price = float(result.price or 0.0)
             exchange_order_id = str(result.order_id or "")
 
-            # Use ref_price if avg_price not available
             if avg_price <= 0 and ref_price > 0:
+                logger.warning(f"[worker] MT5 order avg_price=0, using ref_price={ref_price} as fallback: strategy_id={strategy_id} pending_id={order_id}")
                 avg_price = ref_price
             if filled <= 0:
+                logger.warning(f"[worker] MT5 order filled=0, using amount={amount} as fallback: strategy_id={strategy_id} pending_id={order_id}")
                 filled = amount
 
             executed_at = int(time.time())
@@ -2288,6 +2318,11 @@ class PendingOrderWorker:
                         profit=profit,
                     )
                     logger.info(f"MT5 record done: pending_id={order_id} strategy_id={strategy_id} symbol={symbol}")
+                    _pstr = f", profit={profit:.4f}" if profit is not None else ""
+                    append_strategy_log(
+                        strategy_id, "trade",
+                        f"Trade executed: {signal_type} {symbol} filled={filled:.6f} @ {avg_price:.6f}{_pstr} (exchange=mt5)",
+                    )
             except Exception as e:
                 logger.warning(f"MT5 record_trade/update_position failed: pending_id={order_id}, err={e}")
 
@@ -2305,6 +2340,7 @@ class PendingOrderWorker:
             self._mark_failed(order_id=order_id, error=f"mt5_exception:{e}")
             _console_print(f"[worker] MT5 order exception: strategy_id={strategy_id} pending_id={order_id} err={e}")
             _notify_live_best_effort(status="failed", error=str(e))
+            append_strategy_log(strategy_id, "error", f"MT5 order exception ({symbol} {signal_type}): {e}")
 
     def _mark_sent(
         self,

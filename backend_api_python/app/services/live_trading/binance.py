@@ -459,33 +459,38 @@ class BinanceFuturesClient(BaseRestClient):
         data = self._signed_request("GET", "/fapi/v1/userTrades", params=params)
         return data
 
-    def get_fee_for_order(self, *, symbol: str, order_id: str) -> Tuple[float, str]:
+    def get_fee_for_order(self, *, symbol: str, order_id: str, max_retries: int = 3) -> Tuple[float, str]:
         """
         Best-effort: sum commissions from fills for a specific order.
+        Retries a few times because userTrades may lag behind order fill.
 
         Returns: (total_fee, fee_ccy)
         """
-        try:
-            trades = self.get_user_trades(symbol=symbol, order_id=str(order_id or ""), limit=200)
-        except Exception:
-            trades = []
-        if not isinstance(trades, list):
-            return 0.0, ""
-        total_fee = 0.0
-        fee_ccy = ""
-        for t in trades:
-            if not isinstance(t, dict):
-                continue
+        for attempt in range(max(1, max_retries)):
             try:
-                fee = float(t.get("commission") or 0.0)
+                trades = self.get_user_trades(symbol=symbol, order_id=str(order_id or ""), limit=200)
             except Exception:
-                fee = 0.0
-            ccy = str(t.get("commissionAsset") or "").strip()
-            if fee != 0.0:
-                total_fee += abs(float(fee))
-                if (not fee_ccy) and ccy:
-                    fee_ccy = ccy
-        return float(total_fee), str(fee_ccy or "")
+                trades = []
+            if not isinstance(trades, list):
+                trades = []
+            total_fee = 0.0
+            fee_ccy = ""
+            for t in trades:
+                if not isinstance(t, dict):
+                    continue
+                try:
+                    fee = float(t.get("commission") or 0.0)
+                except Exception:
+                    fee = 0.0
+                ccy = str(t.get("commissionAsset") or "").strip()
+                if fee != 0.0:
+                    total_fee += abs(float(fee))
+                    if (not fee_ccy) and ccy:
+                        fee_ccy = ccy
+            if total_fee > 0 or attempt >= max_retries - 1:
+                return float(total_fee), str(fee_ccy or "")
+            time.sleep(1.0)
+        return 0.0, ""
 
     def get_fee_rate(self, symbol: str, market_type: str = "swap") -> Optional[Dict[str, float]]:
         sym = symbol.upper().replace("-", "").replace("/", "")
@@ -614,12 +619,15 @@ class BinanceFuturesClient(BaseRestClient):
         poll_interval_sec: float = 0.5,
     ) -> Dict[str, Any]:
         """
-        Poll order detail to obtain (best-effort) executed quantity and average price.
+        Poll order detail to obtain (best-effort) executed quantity, average price,
+        and commission (via userTrades).
 
         Returns:
         {
           "filled": float,
           "avg_price": float,
+          "fee": float,
+          "fee_ccy": str,
           "status": str,
           "order": {...}
         }
@@ -639,7 +647,6 @@ class BinanceFuturesClient(BaseRestClient):
             except Exception:
                 filled = 0.0
 
-            # Futures order endpoint usually provides avgPrice; fall back to price/cumQuote.
             avg_price = 0.0
             try:
                 if last.get("avgPrice") is not None and str(last.get("avgPrice")).strip() != "":
@@ -660,14 +667,70 @@ class BinanceFuturesClient(BaseRestClient):
                     avg_price = 0.0
 
             if filled > 0 and avg_price > 0:
-                return {"filled": filled, "avg_price": avg_price, "status": status, "order": last}
+                fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
 
             if status in ("FILLED", "CANCELED", "EXPIRED", "REJECTED"):
-                return {"filled": filled, "avg_price": avg_price, "status": status, "order": last}
+                fee, fee_ccy = 0.0, ""
+                if filled > 0:
+                    fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
 
             if time.time() >= end_ts:
-                return {"filled": filled, "avg_price": avg_price, "status": status, "order": last}
+                fee, fee_ccy = 0.0, ""
+                if filled > 0:
+                    fee, fee_ccy = self._fetch_commission_for_order(symbol=symbol, order_id=order_id, filled=filled, avg_price=avg_price)
+                return {"filled": filled, "avg_price": avg_price, "fee": fee, "fee_ccy": fee_ccy, "status": status, "order": last}
             time.sleep(float(poll_interval_sec or 0.5))
+
+    def _fetch_commission_for_order(self, *, symbol: str, order_id: str, filled: float, avg_price: float) -> Tuple[float, str]:
+        """Fetch real commission from userTrades; fall back to commissionRate calculation."""
+        oid = str(order_id or "").strip()
+        # Method 1: userTrades (up to 3 attempts with 1s delay)
+        for attempt in range(3):
+            try:
+                trades = self.get_user_trades(symbol=symbol, order_id=oid, limit=200) if oid else []
+                if not isinstance(trades, list):
+                    trades = []
+                total_fee = 0.0
+                fee_ccy = ""
+                for t in trades:
+                    if not isinstance(t, dict):
+                        continue
+                    try:
+                        c = float(t.get("commission") or 0.0)
+                    except (ValueError, TypeError):
+                        c = 0.0
+                    ccy = str(t.get("commissionAsset") or "").strip()
+                    if c != 0.0:
+                        total_fee += abs(c)
+                        if not fee_ccy and ccy:
+                            fee_ccy = ccy
+                if total_fee > 0:
+                    logger.debug("Binance fee via userTrades: %.8f %s (order=%s, attempt=%d)", total_fee, fee_ccy, oid, attempt)
+                    return total_fee, fee_ccy
+                if attempt < 2:
+                    time.sleep(1.5)
+            except Exception as e:
+                logger.warning("Binance userTrades fee query failed (attempt=%d): %s", attempt, e)
+                if attempt < 2:
+                    time.sleep(1.0)
+
+        # Method 2: calculate from commissionRate
+        if filled > 0 and avg_price > 0:
+            try:
+                rate_info = self.get_fee_rate(symbol=symbol)
+                if rate_info:
+                    taker_rate = float(rate_info.get("taker") or 0.0)
+                    if taker_rate > 0:
+                        calc_fee = filled * avg_price * taker_rate
+                        logger.info("Binance fee via commissionRate: %.8f USDT (rate=%.6f, order=%s)", calc_fee, taker_rate, oid)
+                        return calc_fee, "USDT"
+            except Exception as e:
+                logger.warning("Binance commissionRate fallback failed: %s", e)
+
+        logger.warning("Binance could not obtain fee for order=%s symbol=%s", oid, symbol)
+        return 0.0, ""
 
     def place_market_order(
         self,

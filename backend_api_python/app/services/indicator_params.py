@@ -297,28 +297,19 @@ class IndicatorCaller:
                 'call_indicator': lambda ref, d, p=None: self.call_indicator(ref, d, p, _depth + 1)
             }
             
-            # 安全执行
-            import builtins
-            def safe_import(name, *args, **kwargs):
-                allowed_modules = ['numpy', 'pandas', 'math', 'json', 'time']
-                if name in allowed_modules or name.split('.')[0] in allowed_modules:
-                    return builtins.__import__(name, *args, **kwargs)
-                raise ImportError(f"Module not allowed: {name}")
-            
-            safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) 
-                           if not k.startswith('_') and k not in [
-                               'eval', 'exec', 'compile', 'open', 'input',
-                               'help', 'exit', 'quit', '__import__',
-                               'copyright', 'credits', 'license'
-                           ]}
-            safe_builtins['__import__'] = safe_import
-            
+            from app.utils.safe_exec import build_safe_builtins, safe_exec_with_validation
+
             exec_env = local_vars.copy()
-            exec_env['__builtins__'] = safe_builtins
-            
-            pre_import = "import numpy as np\nimport pandas as pd\n"
-            exec(pre_import, exec_env)
-            exec(indicator_code, exec_env)
+            exec_env['__builtins__'] = build_safe_builtins()
+
+            exec_result = safe_exec_with_validation(
+                code=indicator_code,
+                exec_globals=exec_env,
+                timeout=30,
+            )
+            if not exec_result['success']:
+                logger.error(f"Indicator {indicator_ref} rejected: {exec_result['error']}")
+                return df.copy()
             
             return exec_env.get('df', df_copy)
             
