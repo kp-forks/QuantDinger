@@ -88,6 +88,11 @@ def load_addon_config() -> Dict[str, Any]:
         ('GROK_API_KEY', 'grok.api_key', 'string'),
         ('GROK_BASE_URL', 'grok.base_url', 'string'),
         ('GROK_MODEL', 'grok.model', 'string'),
+
+        # MiniMax
+        ('MINIMAX_API_KEY', 'minimax.api_key', 'string'),
+        ('MINIMAX_BASE_URL', 'minimax.base_url', 'string'),
+        ('MINIMAX_MODEL', 'minimax.model', 'string'),
         
         # LLM Provider Selection
         ('LLM_PROVIDER', 'llm.provider', 'string'),

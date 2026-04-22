@@ -99,6 +99,16 @@ class MetaAPIKeys(type):
         from app.utils.config_loader import load_addon_config
         val = load_addon_config().get('grok', {}).get('api_key')
         return val if val else ''
+
+    @property
+    def MINIMAX_API_KEY(cls):
+        """MiniMax API key"""
+        env_val = os.getenv('MINIMAX_API_KEY', '').strip()
+        if env_val:
+            return env_val
+        from app.utils.config_loader import load_addon_config
+        val = load_addon_config().get('minimax', {}).get('api_key')
+        return val if val else ''
     
     @property
     def TAVILY_API_KEYS(cls):
